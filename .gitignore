@@ -1,0 +1,24 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# 编译产物
+*.o
+*.elf
+*.bin
+*.hex
+*.map
+
+# VSCode
+.vscode/
+!.vscode/extensions.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.log
+*.tmp
+*~
