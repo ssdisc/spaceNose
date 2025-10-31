@@ -81,7 +81,7 @@ int main(void)
     /* 打印启动信息 */
     printf("\r\n========================================\r\n");
     printf("  星际嗅探者 - 传感器系统启动\r\n");
-    printf("  STM32F407ZGT6 @ 168MHz\r\n");
+    printf("  STM32F407ZGT6 @ %lu MHz\r\n", SystemCoreClock / 1000000);
     printf("  Developer: 苏世鼎\r\n");
     printf("========================================\r\n\r\n");
 
@@ -108,7 +108,7 @@ int main(void)
 }
 
 /**
- * @brief  系统时钟配置 - 尝试168MHz (HSE)，失败则使用16MHz (HSI)
+ * @brief  系统时钟配置 - 使用HSI 16MHz（最稳定的配置）
  */
 void SystemClock_Config(void)
 {
@@ -119,52 +119,32 @@ void SystemClock_Config(void)
     __HAL_RCC_PWR_CLK_ENABLE();
     __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
-    /* 尝试配置HSE和PLL到168MHz */
-    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-    RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-    RCC_OscInitStruct.PLL.PLLM = 8;      // HSE 8MHz / 8 = 1MHz
-    RCC_OscInitStruct.PLL.PLLN = 336;    // 1MHz * 336 = 336MHz
-    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;  // 336MHz / 2 = 168MHz
-    RCC_OscInitStruct.PLL.PLLQ = 7;      // 336MHz / 7 = 48MHz (USB)
+    /* 使用HSI内部时钟（16MHz），这是最可靠的选择 */
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
     
     if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
     {
-        /* HSE启动失败，回退到HSI (16MHz) */
-        RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-        RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-        RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-        RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
-        
-        if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-        {
-            Error_Handler();  // HSI也失败，进入错误处理
-        }
-        
-        /* 使用HSI作为系统时钟 */
-        RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_SYSCLK;
-        RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
-        
-        if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
-        {
-            Error_Handler();
-        }
-        return;  // 使用HSI 16MHz
+        Error_Handler();
     }
-
-    /* HSE成功，配置系统时钟为168MHz */
+    
+    /* 配置系统时钟 */
     RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
                                 | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;     // 168MHz
-    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;      // 42MHz
-    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;      // 84MHz
-
-    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;     // 16MHz
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;      // 16MHz
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;      // 16MHz
+    
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
     {
         Error_Handler();
     }
+    
+    /* 更新SystemCoreClock变量 */
+    SystemCoreClockUpdate();
 }
 
 /**
