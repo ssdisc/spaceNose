@@ -197,7 +197,7 @@ static void MX_USART1_UART_Init(void)
     __HAL_RCC_USART1_CLK_ENABLE();
 
     huart1.Instance = USART1;
-    huart1.Init.BaudRate = 115200;
+    huart1.Init.BaudRate = 9600;
     huart1.Init.WordLength = UART_WORDLENGTH_8B;
     huart1.Init.StopBits = UART_STOPBITS_1;
     huart1.Init.Parity = UART_PARITY_NONE;
