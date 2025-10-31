@@ -3,13 +3,7 @@
  * @file           : main.c
  * @brief          : 星际嗅探者 - 传感器主控程序
  * @author         : 苏世鼎
- * @date           : 2025-10-04
- ******************************************************************************
- * @attention
- *
- * 项目：星际嗅探者 (Interstellar Sniffer)
- * 功能：多气体传感器数据采集与智能识别
- *
+ * @date           : 2025-10-31
  ******************************************************************************
  */
 
@@ -17,17 +11,16 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Private variables ---------------------------------------------------------*/
+/* Private variables */
 UART_HandleTypeDef huart1;
 ADC_HandleTypeDef hadc1;
 
-/* Private function prototypes -----------------------------------------------*/
+/* Private function prototypes */
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_ADC1_Init(void);
-
-/* Private user code ---------------------------------------------------------*/
+void Error_Handler(void);
 
 /**
  * @brief  重定向printf到UART1
@@ -39,9 +32,7 @@ int _write(int file, char *ptr, int len)
 }
 
 /**
- * @brief  读取ADC值（传感器模拟量）
- * @param  channel: ADC通道号
- * @retval ADC原始值 (0-4095)
+ * @brief  读取ADC值
  */
 uint16_t Read_ADC(uint32_t channel)
 {
@@ -60,9 +51,7 @@ uint16_t Read_ADC(uint32_t channel)
 }
 
 /**
- * @brief  将ADC值转换为电压
- * @param  adc_value: ADC原始值
- * @retval 电压值(V)
+ * @brief  ADC转电压
  */
 float ADC_to_Voltage(uint16_t adc_value)
 {
@@ -74,38 +63,39 @@ float ADC_to_Voltage(uint16_t adc_value)
  */
 int main(void)
 {
-    /* MCU配置 */
+    /* 步骤1：初始化HAL库 */
     HAL_Init();
+    
+    /* 步骤2：配置系统时钟 */
     SystemClock_Config();
 
-    /* 外设初始化 */
+    /* 步骤3：初始化GPIO */
     MX_GPIO_Init();
+    
+    /* 步骤4：初始化UART */
     MX_USART1_UART_Init();
+    
+    /* 步骤5：初始化ADC */
     MX_ADC1_Init();
 
-    /* 启动信息 */
-    printf("\r\n");
-    printf("========================================\r\n");
+    /* 打印启动信息 */
+    printf("\r\n========================================\r\n");
     printf("  星际嗅探者 - 传感器系统启动\r\n");
-    printf("  Interstellar Sniffer v1.0\r\n");
+    printf("  STM32F407ZGT6 @ 168MHz\r\n");
     printf("  Developer: 苏世鼎\r\n");
-    printf("========================================\r\n");
-    printf("\r\n");
+    printf("========================================\r\n\r\n");
 
     uint32_t counter = 0;
 
     /* 主循环 */
     while (1)
     {
-        /* LED闪烁（心跳指示） - 测试多个可能的LED引脚 */
-        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+        /* LED闪烁 */
         HAL_GPIO_TogglePin(GPIOF, GPIO_PIN_9);
         HAL_GPIO_TogglePin(GPIOF, GPIO_PIN_10);
-        HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_0);
-        HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_1);
 
         /* 读取传感器数据 */
-        uint16_t adc_ch0 = Read_ADC(ADC_CHANNEL_0);  // PA0 - 传感器1
+        uint16_t adc_ch0 = Read_ADC(ADC_CHANNEL_0);
         float voltage_ch0 = ADC_to_Voltage(adc_ch0);
 
         /* 打印数据 */
@@ -118,33 +108,63 @@ int main(void)
 }
 
 /**
- * @brief  系统时钟配置
- *         配置为168MHz (STM32F407)
+ * @brief  系统时钟配置 - 尝试168MHz (HSE)，失败则使用16MHz (HSI)
  */
 void SystemClock_Config(void)
 {
     RCC_OscInitTypeDef RCC_OscInitStruct = {0};
     RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-    /* 使能HSE */
+    /* 配置电源 */
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+    /* 尝试配置HSE和PLL到168MHz */
     RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
     RCC_OscInitStruct.HSEState = RCC_HSE_ON;
     RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
     RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-    RCC_OscInitStruct.PLL.PLLM = 8;
-    RCC_OscInitStruct.PLL.PLLN = 336;
-    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-    RCC_OscInitStruct.PLL.PLLQ = 7;
-    HAL_RCC_OscConfig(&RCC_OscInitStruct);
+    RCC_OscInitStruct.PLL.PLLM = 8;      // HSE 8MHz / 8 = 1MHz
+    RCC_OscInitStruct.PLL.PLLN = 336;    // 1MHz * 336 = 336MHz
+    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;  // 336MHz / 2 = 168MHz
+    RCC_OscInitStruct.PLL.PLLQ = 7;      // 336MHz / 7 = 48MHz (USB)
+    
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+    {
+        /* HSE启动失败，回退到HSI (16MHz) */
+        RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+        RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+        RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+        RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+        
+        if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+        {
+            Error_Handler();  // HSI也失败，进入错误处理
+        }
+        
+        /* 使用HSI作为系统时钟 */
+        RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_SYSCLK;
+        RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+        
+        if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+        {
+            Error_Handler();
+        }
+        return;  // 使用HSI 16MHz
+    }
 
-    /* 配置系统时钟 */
+    /* HSE成功，配置系统时钟为168MHz */
     RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
                                 | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
     RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
-    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
-    HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5);
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;     // 168MHz
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;      // 42MHz
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;      // 84MHz
+
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+    {
+        Error_Handler();
+    }
 }
 
 /**
@@ -154,33 +174,19 @@ static void MX_GPIO_Init(void)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-    /* 使能GPIO时钟 */
-    __HAL_RCC_GPIOC_CLK_ENABLE();
+    /* 使能时钟 */
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOF_CLK_ENABLE();
-    __HAL_RCC_GPIOE_CLK_ENABLE();
 
-    /* 配置可能的LED引脚为输出 */
+    /* 配置PF9和PF10（板载LED，低电平点亮） */
+    GPIO_InitStruct.Pin = GPIO_PIN_9 | GPIO_PIN_10;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    
-    /* PC13 */
-    GPIO_InitStruct.Pin = GPIO_PIN_13;
-    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-    
-    /* PF9, PF10 */
-    GPIO_InitStruct.Pin = GPIO_PIN_9 | GPIO_PIN_10;
     HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
-    
-    /* PE0, PE1 */
-    GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1;
-    HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-    /* 初始状态：全部设为低电平 */
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOF, GPIO_PIN_9 | GPIO_PIN_10, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0 | GPIO_PIN_1, GPIO_PIN_RESET);
+    /* 初始状态：LED熄灭（高电平） */
+    HAL_GPIO_WritePin(GPIOF, GPIO_PIN_9 | GPIO_PIN_10, GPIO_PIN_SET);
 }
 
 /**
@@ -198,7 +204,11 @@ static void MX_USART1_UART_Init(void)
     huart1.Init.Mode = UART_MODE_TX_RX;
     huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
     huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-    HAL_UART_Init(&huart1);
+    
+    if (HAL_UART_Init(&huart1) != HAL_OK)
+    {
+        Error_Handler();
+    }
 }
 
 /**
@@ -220,26 +230,40 @@ static void MX_ADC1_Init(void)
     hadc1.Init.NbrOfConversion = 1;
     hadc1.Init.DMAContinuousRequests = DISABLE;
     hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
-    HAL_ADC_Init(&hadc1);
+    
+    if (HAL_ADC_Init(&hadc1) != HAL_OK)
+    {
+        Error_Handler();
+    }
 }
 
 /**
- * @brief  错误处理函数
+ * @brief  错误处理 - 快速闪烁LED表示错误
  */
 void Error_Handler(void)
 {
-    __disable_irq();
+    /* 确保GPIO时钟已使能 */
+    __HAL_RCC_GPIOF_CLK_ENABLE();
+    
+    /* 配置GPIO（以防还没初始化） */
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    GPIO_InitStruct.Pin = GPIO_PIN_9 | GPIO_PIN_10;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
+    
+    /* 快速闪烁表示错误 */
     while (1)
     {
-        // 错误指示：快速闪烁LED
-        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-        HAL_Delay(100);
+        GPIOF->ODR ^= (GPIO_PIN_9 | GPIO_PIN_10);  // 翻转
+        for(volatile uint32_t i = 0; i < 200000; i++);
     }
 }
 
 #ifdef USE_FULL_ASSERT
 void assert_failed(uint8_t *file, uint32_t line)
 {
-    printf("Assert failed: file %s on line %lu\r\n", file, line);
+    printf("Assert failed: %s:%lu\r\n", file, line);
 }
 #endif
