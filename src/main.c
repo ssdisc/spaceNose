@@ -12,15 +12,21 @@
 #include <string.h>
 
 /* Private variables */
-UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart1;  // 调试串口
+UART_HandleTypeDef huart2;  // ESP8266串口
 ADC_HandleTypeDef hadc1;
 
 /* Private function prototypes */
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 void Error_Handler(void);
+
+/* ESP8266相关函数 */
+void ESP8266_SendCommand(const char* cmd);
+void ESP8266_Test(void);
 
 /**
  * @brief  重定向printf到UART1
@@ -74,6 +80,7 @@ int main(void)
     
     /* 步骤4：初始化UART */
     MX_USART1_UART_Init();
+    MX_USART2_UART_Init();
     
     /* 步骤5：初始化ADC */
     MX_ADC1_Init();
@@ -87,6 +94,10 @@ int main(void)
     printf("  STM32F407ZGT6 @ %lu MHz\r\n", SystemCoreClock / 1000000);
     printf("  Developer: 苏世鼎\r\n");
     printf("========================================\r\n\r\n");
+
+    /* 测试ESP8266连接 */
+    printf("正在测试ESP8266连接...\r\n");
+    ESP8266_Test();
 
     uint32_t counter = 0;
 
@@ -177,7 +188,7 @@ static void MX_GPIO_Init(void)
 }
 
 /**
- * @brief  USART1初始化 (PA9-TX, PA10-RX)
+ * @brief  USART1初始化 (PA9-TX, PA10-RX) - 调试串口
  */
 static void MX_USART1_UART_Init(void)
 {
@@ -193,6 +204,28 @@ static void MX_USART1_UART_Init(void)
     huart1.Init.OverSampling = UART_OVERSAMPLING_16;
     
     if (HAL_UART_Init(&huart1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+}
+
+/**
+ * @brief  USART2初始化 (PA2-TX, PA3-RX) - ESP8266串口
+ */
+static void MX_USART2_UART_Init(void)
+{
+    __HAL_RCC_USART2_CLK_ENABLE();
+
+    huart2.Instance = USART2;
+    huart2.Init.BaudRate = 115200;  // ESP8266默认波特率
+    huart2.Init.WordLength = UART_WORDLENGTH_8B;
+    huart2.Init.StopBits = UART_STOPBITS_1;
+    huart2.Init.Parity = UART_PARITY_NONE;
+    huart2.Init.Mode = UART_MODE_TX_RX;
+    huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+    
+    if (HAL_UART_Init(&huart2) != HAL_OK)
     {
         Error_Handler();
     }
@@ -221,6 +254,45 @@ static void MX_ADC1_Init(void)
     if (HAL_ADC_Init(&hadc1) != HAL_OK)
     {
         Error_Handler();
+    }
+}
+
+/**
+ * @brief  发送AT指令到ESP8266
+ */
+void ESP8266_SendCommand(const char* cmd)
+{
+    printf("[发送] %s", cmd);
+    HAL_UART_Transmit(&huart2, (uint8_t*)cmd, strlen(cmd), 1000);
+}
+
+/**
+ * @brief  测试ESP8266连接
+ */
+void ESP8266_Test(void)
+{
+    uint8_t rx_buffer[256] = {0};
+    HAL_StatusTypeDef status;
+    
+    // 发送AT测试指令
+    ESP8266_SendCommand("AT\r\n");
+    HAL_Delay(100);
+    
+    // 接收响应
+    status = HAL_UART_Receive(&huart2, rx_buffer, sizeof(rx_buffer)-1, 1000);
+    
+    if (status == HAL_OK)
+    {
+        printf("[接收] %s\r\n", rx_buffer);
+        printf("ESP8266连接成功！\r\n\r\n");
+    }
+    else if (status == HAL_TIMEOUT)
+    {
+        printf("[警告] ESP8266无响应，请检查连接！\r\n\r\n");
+    }
+    else
+    {
+        printf("[错误] 通信失败，错误码：%d\r\n\r\n", status);
     }
 }
 
