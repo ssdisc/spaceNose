@@ -86,7 +86,7 @@ pio device monitor
 ### 串口 (USART1) - 调试串口
 - **PA9**: TX (发送)
 - **PA10**: RX (接收)
-- 波特率: 9600
+- 波特率: 115200
 
 ### 串口 (USART2) - ESP8266通信
 - **PA2**: TX → ESP8266 RX
