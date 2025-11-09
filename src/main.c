@@ -26,7 +26,14 @@ void Error_Handler(void);
 
 /* ESP8266相关函数 */
 void ESP8266_SendCommand(const char* cmd);
+HAL_StatusTypeDef ESP8266_ReceiveResponse(uint8_t* buffer, uint16_t size, uint32_t timeout);
+void ESP8266_ClearBuffer(void);
+uint8_t ESP8266_SendAndWaitOK(const char* cmd, uint32_t timeout);
+uint8_t ESP8266_TestBaudRate(uint32_t baudrate);
 void ESP8266_Test(void);
+uint8_t ESP8266_ConnectWiFi(const char* ssid, const char* password);
+void ESP8266_GetIPAddress(void);
+void ESP8266_ScanWiFi(void);
 
 /**
  * @brief  重定向printf到UART1
@@ -98,6 +105,27 @@ int main(void)
     /* 测试ESP8266连接 */
     printf("正在测试ESP8266连接...\r\n");
     ESP8266_Test();
+
+    /* 连接WiFi热点 */
+    printf("\r\n正在连接WiFi热点...\r\n");
+    
+    // ⚠️ 请在这里修改为你的笔记本WiFi热点名称和密码
+    const char* wifi_ssid = "MCVC05LC";      // 修改为你的热点名称
+    const char* wifi_password = "N46065rj";     // 修改为你的热点密码
+    
+    if (ESP8266_ConnectWiFi(wifi_ssid, wifi_password))
+    {
+        printf("\r\n✓ WiFi连接成功！\r\n");
+        ESP8266_GetIPAddress();
+    }
+    else
+    {
+        printf("\r\n✗ WiFi连接失败，将继续运行但无网络功能\r\n");
+    }
+    
+    printf("\r\n========================================\r\n");
+    printf("系统初始化完成，进入主循环\r\n");
+    printf("========================================\r\n\r\n");
 
     uint32_t counter = 0;
 
@@ -267,33 +295,364 @@ void ESP8266_SendCommand(const char* cmd)
 }
 
 /**
- * @brief  测试ESP8266连接
+ * @brief  清空UART接收缓冲区
  */
-void ESP8266_Test(void)
+void ESP8266_ClearBuffer(void)
 {
-    uint8_t rx_buffer[256] = {0};
-    HAL_StatusTypeDef status;
+    uint8_t dummy;
+    // 清空所有待接收的数据
+    while (HAL_UART_Receive(&huart2, &dummy, 1, 10) == HAL_OK);
+}
+
+/**
+ * @brief  接收ESP8266响应（非阻塞式，逐字节接收）
+ */
+HAL_StatusTypeDef ESP8266_ReceiveResponse(uint8_t* buffer, uint16_t size, uint32_t timeout)
+{
+    uint16_t index = 0;
+    uint32_t start_tick = HAL_GetTick();
+    uint32_t last_receive_tick = HAL_GetTick();
     
-    // 发送AT测试指令
-    ESP8266_SendCommand("AT\r\n");
+    memset(buffer, 0, size);
+    
+    while (index < size - 1)
+    {
+        // 检查总超时
+        if ((HAL_GetTick() - start_tick) > timeout)
+        {
+            if (index > 0)
+            {
+                return HAL_OK;  // 接收到部分数据
+            }
+            return HAL_TIMEOUT;  // 完全无响应
+        }
+        
+        // 如果已经接收到数据，并且超过200ms没有新数据，认为接收完成
+        if (index > 0 && (HAL_GetTick() - last_receive_tick) > 200)
+        {
+            return HAL_OK;
+        }
+        
+        // 尝试接收单个字节
+        if (HAL_UART_Receive(&huart2, &buffer[index], 1, 10) == HAL_OK)
+        {
+            index++;
+            last_receive_tick = HAL_GetTick();
+            
+            // 如果收到OK或ERROR，再等待一小段时间确保完整
+            if (index >= 2)
+            {
+                if (strstr((char*)buffer, "OK\r\n") || strstr((char*)buffer, "ERROR\r\n") || 
+                    strstr((char*)buffer, "FAIL"))
+                {
+                    HAL_Delay(50);  // 等待可能的后续数据
+                    // 尝试接收剩余数据
+                    while ((index < size - 1) && 
+                           (HAL_UART_Receive(&huart2, &buffer[index], 1, 20) == HAL_OK))
+                    {
+                        index++;
+                    }
+                    return HAL_OK;
+                }
+            }
+        }
+    }
+    
+    return HAL_OK;
+}
+
+/**
+ * @brief  发送命令并等待OK响应
+ * @return 1=成功收到OK, 0=失败
+ */
+uint8_t ESP8266_SendAndWaitOK(const char* cmd, uint32_t timeout)
+{
+    uint8_t buffer[256] = {0};
+    
+    // 清空缓冲区
+    ESP8266_ClearBuffer();
+    HAL_Delay(50);
+    
+    // 发送命令
+    HAL_UART_Transmit(&huart2, (uint8_t*)cmd, strlen(cmd), 1000);
     HAL_Delay(100);
     
     // 接收响应
-    status = HAL_UART_Receive(&huart2, rx_buffer, sizeof(rx_buffer)-1, 1000);
+    ESP8266_ReceiveResponse(buffer, sizeof(buffer), timeout);
     
-    if (status == HAL_OK)
+    // 检查是否包含OK
+    if (strstr((char*)buffer, "OK"))
     {
-        printf("[接收] %s\r\n", rx_buffer);
-        printf("ESP8266连接成功！\r\n\r\n");
+        return 1;
     }
-    else if (status == HAL_TIMEOUT)
+    
+    return 0;
+}
+
+/**
+ * @brief  测试指定波特率的ESP8266连接
+ */
+uint8_t ESP8266_TestBaudRate(uint32_t baudrate)
+{
+    uint8_t rx_buffer[128] = {0};
+    HAL_StatusTypeDef status;
+    
+    printf("  测试波特率 %lu ... ", baudrate);
+    
+    // 重新配置USART2波特率
+    huart2.Init.BaudRate = baudrate;
+    if (HAL_UART_Init(&huart2) != HAL_OK)
     {
-        printf("[警告] ESP8266无响应，请检查连接！\r\n\r\n");
+        printf("初始化失败\r\n");
+        return 0;
+    }
+    
+    // 清空接收缓冲区
+    HAL_Delay(50);
+    uint8_t dummy;
+    while (HAL_UART_Receive(&huart2, &dummy, 1, 10) == HAL_OK);
+    
+    // 发送AT指令
+    HAL_UART_Transmit(&huart2, (uint8_t*)"AT\r\n", 4, 1000);
+    
+    // 接收响应
+    status = ESP8266_ReceiveResponse(rx_buffer, sizeof(rx_buffer), 1000);
+    
+    if (status == HAL_OK && strlen((char*)rx_buffer) > 0)
+    {
+        printf("成功！\r\n");
+        printf("    响应: %s\r\n", rx_buffer);
+        
+        // 检查是否包含OK
+        if (strstr((char*)rx_buffer, "OK"))
+        {
+            return 1;  // 成功
+        }
     }
     else
     {
-        printf("[错误] 通信失败，错误码：%d\r\n\r\n", status);
+        printf("无响应\r\n");
     }
+    
+    return 0;
+}
+
+/**
+ * @brief  测试ESP8266连接（增强版）
+ */
+void ESP8266_Test(void)
+{
+    printf("\r\n=== ESP8266 连接诊断 ===\r\n\r");
+    
+    // 常见的ESP8266波特率列表
+    uint32_t baudrates[] = {115200, 9600, 57600, 74880, 38400, 19200};
+    uint8_t baudrate_count = sizeof(baudrates) / sizeof(baudrates[0]);
+    
+    printf("开始自动检测ESP8266波特率...\r\n\r\n");
+    
+    for (uint8_t i = 0; i < baudrate_count; i++)
+    {
+        if (ESP8266_TestBaudRate(baudrates[i]))
+        {
+            printf("\r\n✓ ESP8266连接成功！波特率: %lu\r\n", baudrates[i]);
+            printf("=========================\r\n\r\n");
+            
+            // 获取版本信息
+            printf("正在获取ESP8266版本信息...\r\n");
+            uint8_t version_buffer[256] = {0};
+            HAL_UART_Transmit(&huart2, (uint8_t*)"AT+GMR\r\n", 8, 1000);
+            HAL_Delay(200);
+            ESP8266_ReceiveResponse(version_buffer, sizeof(version_buffer), 1500);
+            printf("%s\r\n", version_buffer);
+            
+            return;
+        }
+    }
+    
+    printf("\r\n✗ 所有波特率测试失败！\r\n");
+    printf("\r\n请检查以下问题：\r\n");
+    printf("  1. ESP8266是否正确供电（3.3V，需要200-300mA电流）\r\n");
+    printf("  2. TX/RX连接是否交叉（STM32 TX→ESP8266 RX, STM32 RX→ESP8266 TX）\r\n");
+    printf("  3. 是否共地（GND连接）\r\n");
+    printf("  4. ESP8266的CH_PD（使能）引脚是否接3.3V\r\n");
+    printf("  5. 尝试按下ESP8266的复位按钮后重新测试\r\n");
+    printf("=========================\r\n\r\n");
+}
+
+/**
+ * @brief  扫描可用WiFi热点
+ */
+void ESP8266_ScanWiFi(void)
+{
+    uint8_t buffer[1024] = {0};
+    
+    printf("\r\n正在扫描附近的WiFi热点...\r\n");
+    printf("（这可能需要几秒钟）\r\n\r\n");
+    
+    HAL_UART_Transmit(&huart2, (uint8_t*)"AT+CWLAP\r\n", 10, 1000);
+    HAL_Delay(100);
+    
+    // 扫描需要较长时间
+    ESP8266_ReceiveResponse(buffer, sizeof(buffer), 8000);
+    
+    if (strlen((char*)buffer) > 0)
+    {
+        printf("扫描结果:\r\n");
+        printf("%s\r\n", buffer);
+    }
+    else
+    {
+        printf("未扫描到WiFi热点\r\n");
+    }
+}
+
+/**
+ * @brief  查询ESP8266的IP地址
+ */
+void ESP8266_GetIPAddress(void)
+{
+    uint8_t buffer[256] = {0};
+    
+    printf("\r\n正在查询IP地址...\r\n");
+    
+    HAL_UART_Transmit(&huart2, (uint8_t*)"AT+CIFSR\r\n", 10, 1000);
+    HAL_Delay(200);
+    ESP8266_ReceiveResponse(buffer, sizeof(buffer), 1500);
+    
+    printf("网络信息:\r\n%s\r\n", buffer);
+}
+
+/**
+ * @brief  连接到WiFi热点
+ * @param  ssid: WiFi热点名称
+ * @param  password: WiFi密码
+ * @return 1=成功, 0=失败
+ */
+uint8_t ESP8266_ConnectWiFi(const char* ssid, const char* password)
+{
+    uint8_t buffer[512] = {0};
+    char cmd[128] = {0};
+    uint8_t retry_count = 0;
+    
+    printf("\r\n--- WiFi连接流程 ---\r\n\r\n");
+    
+    // 步骤0：确保ESP8266处于良好状态
+    printf("0. 准备ESP8266...\r\n");
+    ESP8266_ClearBuffer();
+    HAL_Delay(500);
+    
+    // 发送AT测试
+    if (ESP8266_SendAndWaitOK("AT\r\n", 1000))
+    {
+        printf("   ✓ ESP8266响应正常\r\n\r\n");
+    }
+    else
+    {
+        printf("   ⚠ ESP8266响应异常，尝试继续...\r\n\r\n");
+    }
+    
+    // 步骤1：设置为Station模式
+    printf("1. 设置为Station模式...\r\n");
+    
+    // 清空缓冲区并等待
+    ESP8266_ClearBuffer();
+    HAL_Delay(200);
+    
+    HAL_UART_Transmit(&huart2, (uint8_t*)"AT+CWMODE=1\r\n", 13, 1000);
+    HAL_Delay(500);  // 增加延时，等待ESP8266处理
+    
+    memset(buffer, 0, sizeof(buffer));
+    ESP8266_ReceiveResponse(buffer, sizeof(buffer), 3000);
+    
+    printf("   收到响应: [%s]\r\n", buffer);
+    
+    if (strstr((char*)buffer, "OK") || strstr((char*)buffer, "no change"))
+    {
+        printf("   ✓ 模式设置成功\r\n\r\n");
+    }
+    else
+    {
+        printf("   ⚠ 模式设置可能失败，但继续尝试...\r\n\r\n");
+        // 不直接返回，尝试继续
+        HAL_Delay(1000);
+    }
+    
+    // 步骤2：断开之前的连接
+    printf("2. 断开之前的连接...\r\n");
+    ESP8266_ClearBuffer();
+    HAL_Delay(200);
+    
+    HAL_UART_Transmit(&huart2, (uint8_t*)"AT+CWQAP\r\n", 10, 1000);
+    HAL_Delay(500);
+    
+    memset(buffer, 0, sizeof(buffer));
+    ESP8266_ReceiveResponse(buffer, sizeof(buffer), 2000);
+    printf("   ✓ 已断开（或未连接）\r\n\r\n");
+    
+    // 步骤3：连接到指定WiFi（最多尝试2次）
+    for (retry_count = 0; retry_count < 2; retry_count++)
+    {
+        if (retry_count > 0)
+        {
+            printf("\r\n正在重试连接（第%d次）...\r\n", retry_count + 1);
+            HAL_Delay(2000);
+        }
+        
+        printf("3. 连接到WiFi: %s\r\n", ssid);
+        printf("   密码: %s\r\n", password);
+        printf("   正在连接（最多25秒）...\r\n");
+        
+        // 清空缓冲区
+        ESP8266_ClearBuffer();
+        HAL_Delay(200);
+        
+        sprintf(cmd, "AT+CWJAP=\"%s\",\"%s\"\r\n", ssid, password);
+        HAL_UART_Transmit(&huart2, (uint8_t*)cmd, strlen(cmd), 1000);
+        HAL_Delay(1000);
+        
+        // 连接WiFi需要较长时间
+        memset(buffer, 0, sizeof(buffer));
+        ESP8266_ReceiveResponse(buffer, sizeof(buffer), 25000);
+        
+        printf("   收到响应: [%s]\r\n", buffer);
+        
+        // 检查是否连接成功
+        if (strstr((char*)buffer, "WIFI GOT IP") || 
+            (strstr((char*)buffer, "OK") && !strstr((char*)buffer, "FAIL")))
+        {
+            printf("   ✓ WiFi连接成功！\r\n");
+            return 1;
+        }
+        else if (strstr((char*)buffer, "FAIL") || strstr((char*)buffer, "+CWJAP:"))
+        {
+            printf("   ✗ 连接失败\r\n");
+            
+            // 分析错误原因
+            if (strstr((char*)buffer, "+CWJAP:1"))
+                printf("   原因: 连接超时\r\n");
+            else if (strstr((char*)buffer, "+CWJAP:2"))
+                printf("   原因: 密码错误\r\n");
+            else if (strstr((char*)buffer, "+CWJAP:3"))
+                printf("   原因: 找不到目标AP\r\n");
+            else if (strstr((char*)buffer, "+CWJAP:4"))
+                printf("   原因: 连接失败\r\n");
+            
+            // 如果不是最后一次，继续重试
+            if (retry_count < 1)
+            {
+                continue;
+            }
+        }
+    }
+    
+    // 所有尝试都失败
+    printf("\r\n   ✗ WiFi连接失败！\r\n");
+    printf("   请检查：\r\n");
+    printf("   - WiFi名称和密码是否正确\r\n");
+    printf("   - 热点是否已开启\r\n");
+    printf("   - 热点频段是否为2.4GHz\r\n");
+    printf("   - ESP8266与热点的距离\r\n");
+    return 0;
 }
 
 /**
