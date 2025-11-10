@@ -141,3 +141,100 @@ uint16_t ESP8266_GetBuffer(char* buffer, uint16_t buffer_size) {
     buffer[len] = '\0'; // 添加字符串结束符
     return len;
 }
+
+// ----------------- UDP通信功能 -----------------
+
+/**
+ * @brief 建立UDP连接
+ */
+uint8_t ESP8266_StartConnection(const char* type, const char* remote_ip, uint16_t remote_port, uint16_t local_port) {
+    char cmd[128] = {0};
+    
+    printf("\r\n--- 建立%s连接 ---\r\n", type);
+    
+    // 步骤1：设置为单路连接模式
+    printf("1. 设置单路连接模式...\r\n");
+    if (!ESP8266_SendAndWaitOK("AT+CIPMUX=0\r\n", 3000)) {
+        printf("   ✗ 设置失败\r\n");
+        return 0;
+    }
+    printf("   ✓ 设置成功\r\n");
+    HAL_Delay(500);
+    
+    // 步骤2：建立UDP连接
+    printf("2. 建立UDP连接到 %s:%u (本地端口:%u)...\r\n", remote_ip, remote_port, local_port);
+    sprintf(cmd, "AT+CIPSTART=\"%s\",\"%s\",%u,%u,0\r\n", type, remote_ip, remote_port, local_port);
+    
+    ESP8266_ClearBuffer();
+    ESP8266_SendCommand(cmd);
+    
+    if (ESP8266_WaitForString("CONNECT", 10000) || ESP8266_WaitForString("OK", 2000)) {
+        printf("   ✓ UDP连接建立成功！\r\n");
+        return 1;
+    } else {
+        printf("   ✗ UDP连接失败\r\n");
+        return 0;
+    }
+}
+
+/**
+ * @brief 通过UDP发送数据（使用普通传输模式）
+ */
+uint8_t ESP8266_SendUDP(const uint8_t* data, uint16_t len) {
+    char cmd[32] = {0};
+    
+    // 发送 AT+CIPSEND 命令，指定数据长度
+    sprintf(cmd, "AT+CIPSEND=%u\r\n", len);
+    
+    ESP8266_ClearBuffer();
+    ESP8266_SendCommand(cmd);
+    
+    // 等待 ">" 提示符
+    if (!ESP8266_WaitForString(">", 2000)) {
+        printf("[错误] 未收到发送提示符\r\n");
+        return 0;
+    }
+    
+    // 发送实际数据
+    HAL_UART_Transmit(&huart2, (uint8_t*)data, len, 1000);
+    
+    // 等待 SEND OK
+    if (ESP8266_WaitForString("SEND OK", 3000)) {
+        return 1;
+    } else {
+        printf("[错误] 数据发送失败\r\n");
+        return 0;
+    }
+}
+
+/**
+ * @brief 设置透传模式
+ */
+uint8_t ESP8266_SetTransparentMode(uint8_t enable) {
+    if (enable) {
+        printf("启用透传模式...\r\n");
+        if (!ESP8266_SendAndWaitOK("AT+CIPMODE=1\r\n", 3000)) {
+            printf("   ✗ 透传模式设置失败\r\n");
+            return 0;
+        }
+        printf("   ✓ 透传模式已启用\r\n");
+        
+        // 开始透传
+        ESP8266_ClearBuffer();
+        ESP8266_SendCommand("AT+CIPSEND\r\n");
+        if (ESP8266_WaitForString(">", 3000)) {
+            printf("   ✓ 进入透传模式，可以直接发送数据\r\n");
+            return 1;
+        } else {
+            printf("   ✗ 进入透传模式失败\r\n");
+            return 0;
+        }
+    } else {
+        printf("退出透传模式...\r\n");
+        // 发送 +++ 退出透传
+        HAL_Delay(1000);
+        HAL_UART_Transmit(&huart2, (uint8_t*)"+++", 3, 1000);
+        HAL_Delay(1000);
+        return 1;
+    }
+}

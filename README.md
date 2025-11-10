@@ -140,16 +140,16 @@ STM32 GND     → ESP8266 GND
 - [ ] 数据预处理与滤波
 - [ ] 异常检测逻辑
 
-### Phase 5: 数据上传
-- [ ] TCP客户端实现
-- [ ] HTTP POST数据上传
-- [ ] ONENET/阿里云IoT对接
-- [ ] JSON数据格式化
+### Phase 5: 数据上传 ✅ 已完成
+- [x] UDP客户端实现
+- [x] JSON数据格式化
+- [x] 实时数据传输到服务器
 
-### Phase 6: 前端对接
-- [ ] 与茅雨霏前端通信协议
-- [ ] WebSocket实时数据推送
-- [ ] 远程控制指令接收
+### Phase 6: 前端对接 ✅ 已完成
+- [x] FastAPI后端服务器（UDP接收 + WebSocket转发）
+- [x] Vue前端实时数据显示
+- [x] WebSocket实时数据推送
+- [x] 数据可视化（图表+日志）
 
 ## 快速开始 - WiFi连接
 
@@ -186,10 +186,63 @@ pio device monitor
 
 详细教程请查看：[docs/快速开始-WiFi连接.md](docs/快速开始-WiFi连接.md)
 
+## 🌐 完整数据传输方案（STM32 → 前端）
+
+### 系统架构
+```
+STM32传感器 → UART → ESP8266 → WiFi → UDP服务器 → WebSocket → 前端浏览器
+```
+
+### 快速启动完整系统
+
+#### 1️⃣ 配置STM32代码
+修改 `src/main.c` 中的配置：
+```c
+// WiFi配置（第112-113行）
+const char* wifi_ssid = "你的热点名称";
+const char* wifi_password = "你的热点密码";
+
+// 服务器配置（第124行）
+const char* server_ip = "192.168.137.1";  // 你电脑的IP
+```
+
+#### 2️⃣ 检查网络配置
+双击运行 `check_network.bat` 查看你的IP地址和端口占用情况
+
+#### 3️⃣ 启动后端服务器
+双击运行 `start_server.bat` 或手动运行：
+```bash
+cd backend
+pip install -r requirements.txt
+python main.py
+```
+
+#### 4️⃣ 烧录STM32程序
+```bash
+pio run -t upload
+pio device monitor  # 查看连接状态
+```
+
+#### 5️⃣ 打开前端页面
+浏览器访问 `http://localhost:8000`
+
+### 📋 详细文档
+- **[快速配置指南.md](快速配置指南.md)** - ⚡ 5分钟快速上手
+- **[使用说明.md](使用说明.md)** - 📖 完整使用文档
+- **工具脚本**:
+  - `start_server.bat` - 一键启动后端服务器
+  - `check_network.bat` - 网络配置检查工具
+
 ## 📚 文档索引
 
+### 完整系统文档
+- **[快速配置指南.md](快速配置指南.md)** - 5分钟快速部署完整系统
+- **[使用说明.md](使用说明.md)** - 详细的系统架构和配置说明
+- `start_server.bat` - 后端服务器启动脚本
+- `check_network.bat` - 网络诊断工具
+
 ### WiFi相关
-- [快速开始 - WiFi连接](docs/快速开始-WiFi连接.md) - 5分钟快速上手
+- [快速开始 - WiFi连接](docs/快速开始-WiFi连接.md) - WiFi基础连接
 - [WiFi连接配置指南](docs/WiFi连接配置指南.md) - 详细配置说明
 - [ESP8266故障排查指南](docs/ESP8266故障排查指南.md) - 问题诊断
 - [ESP8266接线图](docs/ESP8266接线图.md) - 硬件连接

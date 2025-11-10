@@ -102,6 +102,7 @@ int main(void)
     printf("========================================\r\n\r\n");
 
     /* 测试ESP8266连接 */
+    uint8_t udp_enabled = 0;  // UDP连接状态标志
     printf("正在测试ESP8266连接...\r\n");
     if (ESP8266_Test())
     {
@@ -116,6 +117,23 @@ int main(void)
         {
             printf("\r\n✓ WiFi连接成功！\r\n");
             ESP8266_GetIPAddress();
+            
+            /* 建立UDP连接到电脑服务器 */
+            printf("\r\n正在建立UDP连接...\r\n");
+            // ⚠️ 请修改为你电脑的IP地址（打开WiFi热点后，电脑会自动获得一个IP，通常是192.168.137.1）
+            const char* server_ip = "192.168.137.1";  // 电脑WiFi热点的IP地址
+            uint16_t server_port = 8888;              // UDP服务器端口
+            uint16_t local_port = 5555;               // ESP8266本地端口
+            
+            if (ESP8266_StartConnection("UDP", server_ip, server_port, local_port))
+            {
+                printf("\r\n✓ UDP连接建立成功！\r\n");
+                udp_enabled = 1;
+            }
+            else
+            {
+                printf("\r\n✗ UDP连接失败，将只本地显示数据\r\n");
+            }
         }
         else
         {
@@ -143,6 +161,21 @@ int main(void)
         /* 打印数据 */
         printf("[%lu] ADC_CH0: %u, Voltage: %.3f V\r\n",
                counter++, adc_ch0, voltage_ch0);
+
+        /* 如果UDP已连接，发送数据到服务器 */
+        if (udp_enabled)
+        {
+            // 构建JSON格式的数据
+            char json_data[128] = {0};
+            sprintf(json_data, "{\"counter\":%lu,\"adc\":%u,\"voltage\":%.3f}\n",
+                    counter - 1, adc_ch0, voltage_ch0);
+            
+            // 通过UDP发送
+            if (!ESP8266_SendUDP((uint8_t*)json_data, strlen(json_data)))
+            {
+                printf("   [警告] UDP发送失败\r\n");
+            }
+        }
 
         /* 延时1秒 */
         HAL_Delay(1000);
