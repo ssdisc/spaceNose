@@ -150,19 +150,25 @@ uint16_t ESP8266_GetBuffer(char* buffer, uint16_t buffer_size) {
 uint8_t ESP8266_StartConnection(const char* type, const char* remote_ip, uint16_t remote_port, uint16_t local_port) {
     char cmd[128] = {0};
     
-    printf("\r\n--- 建立%s连接 ---\r\n", type);
+    printf("\r\n--- 建立%s连接 ---\r\n\r\n", type);
+    
+    // 步骤0：先关闭所有现有连接（重要！）
+    printf("1. 关闭现有连接...\r\n");
+    ESP8266_SendAndWaitOK("AT+CIPCLOSE\r\n", 2000);
+    printf("   ✓ 已关闭\r\n\r\n");
+    HAL_Delay(500);
     
     // 步骤1：设置为单路连接模式
-    printf("1. 设置单路连接模式...\r\n");
+    printf("2. 设置单路连接模式...\r\n");
     if (!ESP8266_SendAndWaitOK("AT+CIPMUX=0\r\n", 3000)) {
         printf("   ✗ 设置失败\r\n");
         return 0;
     }
-    printf("   ✓ 设置成功\r\n");
+    printf("   ✓ 设置成功\r\n\r\n");
     HAL_Delay(500);
     
     // 步骤2：建立UDP连接
-    printf("2. 建立UDP连接到 %s:%u (本地端口:%u)...\r\n", remote_ip, remote_port, local_port);
+    printf("3. 建立UDP连接到 %s:%u (本地端口:%u)...\r\n", remote_ip, remote_port, local_port);
     sprintf(cmd, "AT+CIPSTART=\"%s\",\"%s\",%u,%u,0\r\n", type, remote_ip, remote_port, local_port);
     
     ESP8266_ClearBuffer();
