@@ -60,6 +60,7 @@
 | **嵌入式层** | `C`, `STM32 HAL`  | 使用PlatformIO进行开发的STM32固件     |
 | **通信层**   | `ESP8266`         | UART, UDP, WiFi, JSON              |
 | **后端层**   | `Python`, `FastAPI` | Uvicorn, asyncio, websockets       |
+| **数据库层** | `MySQL`, `SQLAlchemy` | 持久化存储传感器数据，支持历史查询  |
 | **前端层**   | `Vue.js 2`, `Canvas` | JavaScript (ES6+), CSS3            |
 | **开发工具** | `PlatformIO`, `VSCode` | 跨平台嵌入式开发环境               |
 
@@ -82,7 +83,23 @@
 - **重要**: 频段必须设置为 **2.4 GHz**，因为ESP8266不支持5GHz。
 - 记下你的热点名称和密码。
 
-### 3️⃣ 修改STM32配置
+### 3️⃣ 配置MySQL数据库
+- 确保已安装MySQL数据库服务（[下载地址](https://dev.mysql.com/downloads/mysql/)）
+- 修改 `backend/.env` 文件中的数据库配置：
+  ```env
+  DB_HOST=localhost
+  DB_PORT=3306
+  DB_USER=root
+  DB_PASSWORD=你的MySQL密码
+  DB_NAME=spacenose
+  ```
+- 运行数据库初始化脚本：
+  ```bash
+  cd backend
+  python init_database.py
+  ```
+
+### 4️⃣ 修改STM32配置
 - 打开 `src/main.c` 文件。
 - 修改WiFi热点和服务器IP信息。你的服务器IP就是你电脑在热点中的IP地址，通常是 `192.168.137.1`。
   ```c
@@ -92,16 +109,16 @@
   const char* server_ip = "192.168.137.1"; // 通常是这个，如有不同请修改
   ```
 
-### 4️⃣ 启动后端服务器
+### 5️⃣ 启动后端服务器
 - **双击运行根目录下的 `start_server.bat` 脚本**。
 - 该脚本会自动安装Python依赖并启动FastAPI服务器。
-- 看到 `Uvicorn running on http://0.0.0.0:8000` 表示启动成功。
+- 看到 `Uvicorn running on http://0.0.0.0:8000` 和 `数据库连接成功` 表示启动成功。
 
-### 5️⃣ 编译和上传固件
+### 6️⃣ 编译和上传固件
 - 在VSCode中，使用PlatformIO插件。
 - 点击底部状态栏的 `→` (Upload) 按钮来编译和烧录程序到STM32。
 
-### 6️⃣ 查看结果
+### 7️⃣ 查看结果
 - 程序上传成功后，STM32会自动重启并连接网络。
 - 打开浏览器，访问 **`http://localhost:8000`**。
 - 如果一切正常，你将看到实时更新的数据卡片、图表和日志！🚀
@@ -113,7 +130,12 @@ spaceNose/
 │   ├── main.c                    # 主程序（采集+发送）
 │   └── esp8266_driver.c/h        # ESP8266驱动
 ├── backend/                      # 后端服务器
-│   ├── main.py                   # FastAPI服务器（UDP+WebSocket）
+│   ├── main.py                   # FastAPI服务器（UDP+WebSocket+API）
+│   ├── config.py                 # 配置文件管理
+│   ├── models.py                 # 数据库模型定义
+│   ├── database.py               # 数据库操作
+│   ├── init_database.py          # 数据库初始化脚本
+│   ├── .env                      # 环境变量配置（需手动配置）
 │   └── requirements.txt          # Python依赖
 ├── web/                          # 前端Vue应用
 │   └── src/App.vue               # Vue主组件
@@ -122,6 +144,34 @@ spaceNose/
 ├── start_server.bat              # 启动脚本
 └── README.md                     # 📍 你正在阅读的文件
 ```
+
+## 🗄️ 数据库API接口
+
+系统提供了丰富的RESTful API接口用于查询历史数据：
+
+| 接口 | 方法 | 说明 |
+| :--- | :--- | :--- |
+| `/api/latest` | GET | 获取最新的实时数据（内存中） |
+| `/api/data/recent?limit=100` | GET | 获取最近N条数据库记录 |
+| `/api/data/hours?hours=1` | GET | 获取最近N小时的数据 |
+| `/api/data/range?start=时间&end=时间` | GET | 根据时间范围查询数据 |
+| `/api/data/{id}` | GET | 根据ID获取单条数据 |
+| `/api/stats` | GET | 获取数据统计信息 |
+| `/api/data/cleanup?days=30` | DELETE | 清理N天前的旧数据 |
+
+**示例调用：**
+```bash
+# 获取最近100条数据
+curl http://localhost:8000/api/data/recent?limit=100
+
+# 获取最近1小时的数据
+curl http://localhost:8000/api/data/hours?hours=1
+
+# 获取统计信息
+curl http://localhost:8000/api/stats
+```
+
+访问 `http://localhost:8000/docs` 可查看完整的API文档（自动生成）。
 
 ## 📚 文档索引
 - **[系统架构图.txt](系统架构图.txt)**: 深入了解系统各层设计和数据流。

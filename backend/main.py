@@ -1,12 +1,18 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 import asyncio
 import socket
 import json
-from datetime import datetime
-from typing import List
+from datetime import datetime, timedelta
+from typing import List, Optional
+from sqlalchemy.orm import Session
+
+# 导入数据库相关模块
+from database import init_db, get_db, SessionLocal, SensorDataCRUD
+from models import SensorData
+from config import settings
 
 app = FastAPI()
 
@@ -44,9 +50,9 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# UDP服务器配置
-UDP_HOST = "0.0.0.0"  # 监听所有网络接口
-UDP_PORT = 8888
+# UDP服务器配置（从配置文件读取）
+UDP_HOST = settings.UDP_HOST
+UDP_PORT = settings.UDP_PORT
 
 # 存储最新的传感器数据
 latest_data = {
@@ -84,6 +90,20 @@ async def udp_server():
                 
                 print(f"✓ 收到数据: {sensor_data}")
                 
+                # 保存到数据库
+                try:
+                    db = SessionLocal()
+                    SensorDataCRUD.create(
+                        db=db,
+                        counter=sensor_data.get('counter', 0),
+                        adc=sensor_data.get('adc', 0),
+                        voltage=sensor_data.get('voltage', 0.0),
+                        source_ip=addr[0]  # 记录来源IP
+                    )
+                    db.close()
+                except Exception as db_error:
+                    print(f"⚠ 数据库保存失败: {db_error}")
+                
                 # 广播给所有WebSocket客户端
                 await manager.broadcast(json.dumps(sensor_data))
                 
@@ -100,13 +120,23 @@ async def udp_server():
 
 @app.on_event("startup")
 async def startup_event():
-    """启动UDP服务器"""
-    asyncio.create_task(udp_server())
+    """启动UDP服务器和初始化数据库"""
+    # 初始化数据库
     print("========================================")
     print("  星际嗅探者 - 后端服务器启动")
-    print(f"  HTTP服务: http://127.0.0.1:8000")
-    print(f"  UDP服务: {UDP_HOST}:{UDP_PORT}")
-    print(f"  WebSocket: ws://127.0.0.1:8000/ws")
+    print("========================================")
+    
+    if init_db():
+        print(f"✓ 数据库连接成功: {settings.DB_NAME}")
+    else:
+        print("⚠ 数据库连接失败，请检查配置")
+    
+    # 启动UDP服务器
+    asyncio.create_task(udp_server())
+    
+    print(f"✓ HTTP服务: http://127.0.0.1:{settings.SERVER_PORT}")
+    print(f"✓ UDP服务: {UDP_HOST}:{UDP_PORT}")
+    print(f"✓ WebSocket: ws://127.0.0.1:{settings.SERVER_PORT}/ws")
     print("========================================")
 
 @app.websocket("/ws")
@@ -129,8 +159,105 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/api/latest")
 async def get_latest_data():
-    """获取最新的传感器数据"""
+    """获取最新的传感器数据（内存中的）"""
     return latest_data
+
+# ==================== 数据库API接口 ====================
+
+@app.get("/api/data/recent")
+async def get_recent_data(
+    limit: int = Query(default=100, ge=1, le=1000, description="返回的数据条数"),
+    db: Session = Depends(get_db)
+):
+    """获取最近的N条数据库记录"""
+    data_list = SensorDataCRUD.get_latest(db, limit=limit)
+    return {
+        "success": True,
+        "count": len(data_list),
+        "data": [item.to_dict() for item in data_list]
+    }
+
+@app.get("/api/data/hours")
+async def get_recent_hours_data(
+    hours: int = Query(default=1, ge=1, le=24, description="获取最近N小时的数据"),
+    db: Session = Depends(get_db)
+):
+    """获取最近N小时的数据"""
+    data_list = SensorDataCRUD.get_recent_hours(db, hours=hours)
+    return {
+        "success": True,
+        "count": len(data_list),
+        "hours": hours,
+        "data": [item.to_dict() for item in data_list]
+    }
+
+@app.get("/api/data/range")
+async def get_data_by_range(
+    start: str = Query(..., description="开始时间，格式: YYYY-MM-DD HH:MM:SS"),
+    end: str = Query(..., description="结束时间，格式: YYYY-MM-DD HH:MM:SS"),
+    db: Session = Depends(get_db)
+):
+    """根据时间范围获取数据"""
+    try:
+        start_time = datetime.strptime(start, '%Y-%m-%d %H:%M:%S')
+        end_time = datetime.strptime(end, '%Y-%m-%d %H:%M:%S')
+        data_list = SensorDataCRUD.get_by_time_range(db, start_time, end_time)
+        return {
+            "success": True,
+            "count": len(data_list),
+            "start_time": start,
+            "end_time": end,
+            "data": [item.to_dict() for item in data_list]
+        }
+    except ValueError as e:
+        return {
+            "success": False,
+            "error": f"时间格式错误: {str(e)}"
+        }
+
+@app.get("/api/data/{data_id}")
+async def get_data_by_id(
+    data_id: int,
+    db: Session = Depends(get_db)
+):
+    """根据ID获取单条数据"""
+    data = SensorDataCRUD.get_by_id(db, data_id)
+    if data:
+        return {
+            "success": True,
+            "data": data.to_dict()
+        }
+    else:
+        return {
+            "success": False,
+            "error": "数据不存在"
+        }
+
+@app.get("/api/stats")
+async def get_statistics(db: Session = Depends(get_db)):
+    """获取数据统计信息"""
+    total_count = SensorDataCRUD.get_count(db)
+    recent_data = SensorDataCRUD.get_latest(db, limit=1)
+    
+    return {
+        "success": True,
+        "total_records": total_count,
+        "latest_record": recent_data[0].to_dict() if recent_data else None,
+        "database": settings.DB_NAME
+    }
+
+@app.delete("/api/data/cleanup")
+async def cleanup_old_data(
+    days: int = Query(default=30, ge=1, le=365, description="删除N天前的数据"),
+    db: Session = Depends(get_db)
+):
+    """清理旧数据"""
+    deleted_count = SensorDataCRUD.delete_old_data(db, days=days)
+    return {
+        "success": True,
+        "deleted_count": deleted_count,
+        "message": f"已删除 {days} 天前的 {deleted_count} 条记录"
+    }
 
 @app.get("/{full_path:path}")
 async def catch_all(full_path: str):
@@ -155,4 +282,4 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=settings.SERVER_HOST, port=settings.SERVER_PORT)
