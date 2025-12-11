@@ -138,6 +138,12 @@ export default {
       this.activeTab = tab
       if (tab === 'history') {
         this.fetchRecentData()
+      } else {
+        // 重新挂载实时视图时重建画布并重绘
+        this.$nextTick(() => {
+          this.initChart()
+          this.drawChart()
+        })
       }
     },
 
@@ -232,6 +238,10 @@ export default {
     
     initChart() {
       const canvas = this.$refs.chartCanvas
+      if (!canvas) {
+        this.chart = null
+        return
+      }
       const ctx = canvas.getContext('2d')
       
       // 简单的手动绘图（避免引入Chart.js依赖）
