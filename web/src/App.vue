@@ -6,9 +6,25 @@
         <span class="status-indicator" :class="{ connected: isConnected }"></span>
         <span>{{ connectionStatus }}</span>
       </div>
+      <div class="nav-tabs">
+        <button
+          class="nav-btn"
+          :class="{ active: activeTab === 'realtime' }"
+          @click="switchTab('realtime')"
+        >
+          实时数据
+        </button>
+        <button
+          class="nav-btn"
+          :class="{ active: activeTab === 'history' }"
+          @click="switchTab('history')"
+        >
+          历史数据
+        </button>
+      </div>
     </div>
 
-    <div class="container">
+    <div class="container" v-if="activeTab === 'realtime'">
       <!-- 主要数据显示卡片 -->
       <div class="card-grid">
         <div class="data-card">
@@ -46,16 +62,30 @@
           <canvas ref="chartCanvas"></canvas>
         </div>
       </div>
+    </div>
 
-      <!-- 数据日志 -->
+    <div class="container" v-else>
       <div class="log-container">
-        <h2>📝 数据日志</h2>
+        <div class="log-header">
+          <h2>📝 历史数据（数据库）</h2>
+          <div class="log-actions">
+            <select v-model.number="historyLimit" @change="fetchRecentData">
+              <option :value="20">最近 20 条</option>
+              <option :value="50">最近 50 条</option>
+              <option :value="100">最近 100 条</option>
+            </select>
+            <button class="refresh-button" @click="fetchRecentData">刷新</button>
+          </div>
+        </div>
         <div class="log-content">
-          <div v-for="(log, index) in dataLogs" :key="index" class="log-item">
-            <span class="log-time">{{ log.timestamp }}</span>
-            <span class="log-data">
-              计数: {{ log.counter }} | ADC: {{ log.adc }} | 电压: {{ log.voltage.toFixed(3) }}V
-            </span>
+          <div v-if="dataLogs.length === 0" class="log-empty">暂无历史数据</div>
+          <div v-else>
+            <div v-for="(log, index) in dataLogs" :key="index" class="log-item">
+              <span class="log-time">{{ log.timestamp }}</span>
+              <span class="log-data">
+                计数: {{ log.counter }} | ADC: {{ log.adc }} | 电压: {{ log.voltage.toFixed(3) }}V
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -76,6 +106,7 @@ export default {
         voltage: 0.0,
         timestamp: ''
       },
+      activeTab: 'realtime',
       dataLogs: [],
       chart: null,
       chartData: {
@@ -83,7 +114,8 @@ export default {
         voltageData: [],
         adcData: []
       },
-      maxDataPoints: 20
+      maxDataPoints: 20,
+      historyLimit: 50
     }
   },
   computed: {
@@ -92,8 +124,9 @@ export default {
     }
   },
   mounted() {
-    this.connectWebSocket()
     this.initChart()
+    this.fetchRecentData()
+    this.connectWebSocket()
   },
   beforeUnmount() {
     if (this.ws) {
@@ -101,6 +134,49 @@ export default {
     }
   },
   methods: {
+    switchTab(tab) {
+      this.activeTab = tab
+      if (tab === 'history') {
+        this.fetchRecentData()
+      }
+    },
+
+    apiBaseUrl() {
+      const protocol = window.location.protocol === 'https:' ? 'https' : 'http'
+      return `${protocol}://${window.location.hostname}:8000`
+    },
+
+    async fetchRecentData() {
+      try {
+        const response = await fetch(`${this.apiBaseUrl()}/api/data/recent?limit=${this.historyLimit}`)
+        const json = await response.json()
+        if (json.success && Array.isArray(json.data)) {
+          // 填充数据库最新记录（后端已按时间倒序返回）
+          this.dataLogs = json.data.map(item => ({
+            counter: item.counter ?? 0,
+            adc: item.adc ?? 0,
+            voltage: item.voltage ?? 0,
+            timestamp: item.timestamp ?? ''
+          }))
+
+          // 若 WebSocket 尚未推送，用最新一条作为当前显示值（仅实时页时使用）
+          if (this.activeTab === 'realtime' && this.dataLogs.length > 0) {
+            this.sensorData = this.dataLogs[0]
+          }
+
+          // 重新绘制图表，按时间顺序取最近 maxDataPoints 条
+          this.resetChart()
+          const chartSeed = [...this.dataLogs].reverse().slice(-this.maxDataPoints)
+          chartSeed.forEach(data => this.updateChart(data, { skipTrim: true }))
+          this.drawChart()
+        } else {
+          console.warn('获取历史数据失败，返回值异常:', json)
+        }
+      } catch (error) {
+        console.error('加载历史数据失败:', error)
+      }
+    },
+
     connectWebSocket() {
       // 使用当前页面的主机名连接WebSocket
       const wsUrl = `ws://${window.location.hostname}:8000/ws`
@@ -111,6 +187,8 @@ export default {
       this.ws.onopen = () => {
         console.log('✓ WebSocket连接成功')
         this.isConnected = true
+        // 连接后拉取一次数据库历史，保证列表同步
+        this.fetchRecentData()
       }
       
       this.ws.onmessage = (event) => {
@@ -121,9 +199,9 @@ export default {
           // 更新当前数据
           this.sensorData = data
           
-          // 添加到日志（最多保留50条）
+          // 添加到日志（最多保留 historyLimit 条）
           this.dataLogs.unshift(data)
-          if (this.dataLogs.length > 50) {
+          if (this.dataLogs.length > this.historyLimit) {
             this.dataLogs.pop()
           }
           
@@ -163,14 +241,22 @@ export default {
       }
     },
     
-    updateChart(data) {
+    resetChart() {
+      this.chartData = {
+        labels: [],
+        voltageData: [],
+        adcData: []
+      }
+    },
+
+    updateChart(data, options = {}) {
       // 更新数据数组
       this.chartData.labels.push(data.counter)
       this.chartData.voltageData.push(data.voltage)
       this.chartData.adcData.push(data.adc)
       
       // 限制数据点数量
-      if (this.chartData.labels.length > this.maxDataPoints) {
+      if (!options.skipTrim && this.chartData.labels.length > this.maxDataPoints) {
         this.chartData.labels.shift()
         this.chartData.voltageData.shift()
         this.chartData.adcData.shift()
@@ -289,6 +375,34 @@ export default {
   text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
 }
 
+.nav-tabs {
+  margin-top: 15px;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.nav-btn {
+  border: none;
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+  backdrop-filter: blur(6px);
+}
+
+.nav-btn.active {
+  background: white;
+  color: #764ba2;
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+.nav-btn:hover {
+  transform: translateY(-1px);
+}
+
 .status {
   display: flex;
   align-items: center;
@@ -384,6 +498,49 @@ export default {
   font-size: 1.5em;
 }
 
+.log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.log-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.log-actions select {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #ced4da;
+  background: #fff;
+}
+
+.refresh-button {
+  border: none;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+}
+
+.refresh-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15);
+  opacity: 0.95;
+}
+
+.refresh-button:active {
+  transform: translateY(0);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
 .chart {
   width: 100%;
   height: 300px;
@@ -423,6 +580,12 @@ export default {
 
 .log-data {
   color: #333;
+}
+
+.log-empty {
+  text-align: center;
+  color: #6c757d;
+  padding: 20px 0;
 }
 
 /* 滚动条样式 */
