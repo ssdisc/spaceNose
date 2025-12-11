@@ -21,11 +21,10 @@ class Settings:
     DATABASE_URL: str = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
     
     # 服务器配置
-    UDP_HOST: str = os.getenv("UDP_HOST", "0.0.0.0")
-    UDP_PORT: int = int(os.getenv("UDP_PORT", "8888"))
+    TCP_HOST: str = os.getenv("TCP_HOST") or os.getenv("UDP_HOST", "0.0.0.0")
+    TCP_PORT: int = int(os.getenv("TCP_PORT") or os.getenv("UDP_PORT", "8888"))
     SERVER_HOST: str = os.getenv("SERVER_HOST", "0.0.0.0")
     SERVER_PORT: int = int(os.getenv("SERVER_PORT", "8000"))
 
 # 创建配置实例
 settings = Settings()
-

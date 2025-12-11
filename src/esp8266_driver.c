@@ -142,12 +142,12 @@ uint16_t ESP8266_GetBuffer(char* buffer, uint16_t buffer_size) {
     return len;
 }
 
-// ----------------- UDP通信功能 -----------------
+// ----------------- TCP通信功能 -----------------
 
 /**
- * @brief 建立UDP连接
+ * @brief 建立TCP连接
  */
-uint8_t ESP8266_StartConnection(const char* type, const char* remote_ip, uint16_t remote_port, uint16_t local_port) {
+uint8_t ESP8266_StartConnection(const char* type, const char* remote_ip, uint16_t remote_port) {
     char cmd[128] = {0};
     
     printf("\r\n--- 建立%s连接 ---\r\n\r\n", type);
@@ -167,26 +167,26 @@ uint8_t ESP8266_StartConnection(const char* type, const char* remote_ip, uint16_
     printf("   ✓ 设置成功\r\n\r\n");
     HAL_Delay(500);
     
-    // 步骤2：建立UDP连接
-    printf("3. 建立UDP连接到 %s:%u (本地端口:%u)...\r\n", remote_ip, remote_port, local_port);
-    sprintf(cmd, "AT+CIPSTART=\"%s\",\"%s\",%u,%u,0\r\n", type, remote_ip, remote_port, local_port);
+    // 步骤2：建立TCP连接
+    printf("3. 建立TCP连接到 %s:%u ...\r\n", remote_ip, remote_port);
+    sprintf(cmd, "AT+CIPSTART=\"%s\",\"%s\",%u\r\n", type, remote_ip, remote_port);
     
     ESP8266_ClearBuffer();
     ESP8266_SendCommand(cmd);
     
     if (ESP8266_WaitForString("CONNECT", 10000) || ESP8266_WaitForString("OK", 2000)) {
-        printf("   ✓ UDP连接建立成功！\r\n");
+        printf("   ✓ TCP连接建立成功！\r\n");
         return 1;
     } else {
-        printf("   ✗ UDP连接失败\r\n");
+        printf("   ✗ TCP连接失败\r\n");
         return 0;
     }
 }
 
 /**
- * @brief 通过UDP发送数据（使用普通传输模式）
+ * @brief 通过TCP发送数据（使用普通传输模式）
  */
-uint8_t ESP8266_SendUDP(const uint8_t* data, uint16_t len) {
+uint8_t ESP8266_SendTCP(const uint8_t* data, uint16_t len) {
     char cmd[32] = {0};
     
     // 发送 AT+CIPSEND 命令，指定数据长度

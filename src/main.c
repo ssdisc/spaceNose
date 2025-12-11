@@ -102,7 +102,7 @@ int main(void)
     printf("========================================\r\n\r\n");
 
     /* 测试ESP8266连接 */
-    uint8_t udp_enabled = 0;  // UDP连接状态标志
+    uint8_t tcp_enabled = 0;  // TCP连接状态标志
     printf("正在测试ESP8266连接...\r\n");
     if (ESP8266_Test())
     {
@@ -118,21 +118,20 @@ int main(void)
             printf("\r\n✓ WiFi连接成功！\r\n");
             ESP8266_GetIPAddress();
             
-            /* 建立UDP连接到电脑服务器 */
-            printf("\r\n正在建立UDP连接...\r\n");
+            /* 建立TCP连接到电脑服务器 */
+            printf("\r\n正在建立TCP连接...\r\n");
             // ⚠️ 请修改为你电脑的IP地址（打开WiFi热点后，电脑会自动获得一个IP，通常是192.168.137.1）
             const char* server_ip = "192.168.137.1";  // 电脑WiFi热点的IP地址
-            uint16_t server_port = 8888;              // UDP服务器端口
-            uint16_t local_port = 5555;               // ESP8266本地端口
+            uint16_t server_port = 8888;              // TCP服务器端口
             
-            if (ESP8266_StartConnection("UDP", server_ip, server_port, local_port))
+            if (ESP8266_StartConnection("TCP", server_ip, server_port))
             {
-                printf("\r\n✓ UDP连接建立成功！\r\n");
-                udp_enabled = 1;
+                printf("\r\n✓ TCP连接建立成功！\r\n");
+                tcp_enabled = 1;
             }
             else
             {
-                printf("\r\n✗ UDP连接失败，将只本地显示数据\r\n");
+                printf("\r\n✗ TCP连接失败，将只本地显示数据\r\n");
             }
         }
         else
@@ -162,18 +161,18 @@ int main(void)
         printf("[%lu] ADC_CH5: %u, Voltage: %.3f V\r\n",
                counter++, adc_ch5, voltage_ch5);
 
-        /* 如果UDP已连接，发送数据到服务器 */
-        if (udp_enabled)
+        /* 如果TCP已连接，发送数据到服务器 */
+        if (tcp_enabled)
         {
             // 构建JSON格式的数据
             char json_data[128] = {0};
             sprintf(json_data, "{\"counter\":%lu,\"adc\":%u,\"voltage\":%.3f}\n",
                     counter - 1, adc_ch5, voltage_ch5);
             
-            // 通过UDP发送
-            if (!ESP8266_SendUDP((uint8_t*)json_data, strlen(json_data)))
+            // 通过TCP发送
+            if (!ESP8266_SendTCP((uint8_t*)json_data, strlen(json_data)))
             {
-                printf("   [警告] UDP发送失败\r\n");
+                printf("   [警告] TCP发送失败\r\n");
             }
         }
 

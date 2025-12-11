@@ -3,7 +3,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 import asyncio
-import socket
 import json
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -50,9 +49,9 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# UDP服务器配置（从配置文件读取）
-UDP_HOST = settings.UDP_HOST
-UDP_PORT = settings.UDP_PORT
+# TCP服务器配置（从配置文件读取，兼容旧的UDP环境变量）
+TCP_HOST = settings.TCP_HOST
+TCP_PORT = settings.TCP_PORT
 
 # 存储最新的传感器数据
 latest_data = {
@@ -62,65 +61,66 @@ latest_data = {
     "timestamp": ""
 }
 
-async def udp_server():
-    """UDP服务器，接收来自ESP8266的数据"""
-    loop = asyncio.get_event_loop()
-    
-    # 创建UDP socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((UDP_HOST, UDP_PORT))
-    sock.setblocking(False)
-    
-    print(f"✓ UDP服务器启动在 {UDP_HOST}:{UDP_PORT}")
-    
-    while True:
-        try:
-            # 非阻塞接收数据
-            data, addr = await loop.sock_recvfrom(sock, 1024)
-            
-            # 解析JSON数据
+async def handle_tcp_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    """处理单个TCP客户端，按行解析JSON"""
+    addr = writer.get_extra_info("peername")
+    peer_ip = addr[0] if addr else "unknown"
+    print(f"✓ TCP客户端连接: {peer_ip}")
+    try:
+        while True:
+            data = await reader.readline()
+            if not data:
+                break
+
             try:
-                json_str = data.decode('utf-8').strip()
+                json_str = data.decode("utf-8").strip()
+                if not json_str:
+                    continue
                 sensor_data = json.loads(json_str)
-                sensor_data['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                
-                # 更新最新数据
+                sensor_data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
                 global latest_data
                 latest_data = sensor_data
-                
+
                 print(f"✓ 收到数据: {sensor_data}")
-                
-                # 保存到数据库
+
                 try:
                     db = SessionLocal()
                     SensorDataCRUD.create(
                         db=db,
-                        counter=sensor_data.get('counter', 0),
-                        adc=sensor_data.get('adc', 0),
-                        voltage=sensor_data.get('voltage', 0.0),
-                        source_ip=addr[0]  # 记录来源IP
+                        counter=sensor_data.get("counter", 0),
+                        adc=sensor_data.get("adc", 0),
+                        voltage=sensor_data.get("voltage", 0.0),
+                        source_ip=peer_ip,
                     )
                     db.close()
                 except Exception as db_error:
                     print(f"⚠ 数据库保存失败: {db_error}")
-                
-                # 广播给所有WebSocket客户端
+
                 await manager.broadcast(json.dumps(sensor_data))
-                
+
             except json.JSONDecodeError as e:
                 print(f"✗ JSON解析失败: {e}, 原始数据: {data}")
             except Exception as e:
                 print(f"✗ 处理数据失败: {e}")
-                
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            # 如果没有数据，等待一小段时间
-            await asyncio.sleep(0.01)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        print(f"✗ TCP客户端断开: {peer_ip}")
+
+
+async def tcp_server():
+    """TCP服务器，接收来自ESP8266的数据"""
+    server = await asyncio.start_server(handle_tcp_client, TCP_HOST, TCP_PORT)
+    print(f"✓ TCP服务器启动在 {TCP_HOST}:{TCP_PORT}")
+    async with server:
+        await server.serve_forever()
 
 @app.on_event("startup")
 async def startup_event():
-    """启动UDP服务器和初始化数据库"""
+    """启动TCP服务器和初始化数据库"""
     # 初始化数据库
     print("========================================")
     print("  星际嗅探者 - 后端服务器启动")
@@ -131,11 +131,11 @@ async def startup_event():
     else:
         print("⚠ 数据库连接失败，请检查配置")
     
-    # 启动UDP服务器
-    asyncio.create_task(udp_server())
+    # 启动TCP服务器
+    asyncio.create_task(tcp_server())
     
     print(f"✓ HTTP服务: http://127.0.0.1:{settings.SERVER_PORT}")
-    print(f"✓ UDP服务: {UDP_HOST}:{UDP_PORT}")
+    print(f"✓ TCP服务: {TCP_HOST}:{TCP_PORT}")
     print(f"✓ WebSocket: ws://127.0.0.1:{settings.SERVER_PORT}/ws")
     print("========================================")
 

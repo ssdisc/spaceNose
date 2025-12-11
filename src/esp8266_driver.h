@@ -62,22 +62,21 @@ uint16_t ESP8266_GetBuffer(char* buffer, uint16_t buffer_size);
 void ESP8266_RxCallback(void);
 
 /**
- * @brief 建立UDP连接
- * @param type "UDP" 或 "TCP"
+ * @brief 建立TCP连接
+ * @param type "TCP"
  * @param remote_ip 远程服务器IP地址
  * @param remote_port 远程服务器端口
- * @param local_port 本地端口（UDP模式下需要）
  * @return 1: 成功; 0: 失败
  */
-uint8_t ESP8266_StartConnection(const char* type, const char* remote_ip, uint16_t remote_port, uint16_t local_port);
+uint8_t ESP8266_StartConnection(const char* type, const char* remote_ip, uint16_t remote_port);
 
 /**
- * @brief 通过UDP发送数据
+ * @brief 通过TCP发送数据
  * @param data 要发送的数据
  * @param len 数据长度
  * @return 1: 成功; 0: 失败
  */
-uint8_t ESP8266_SendUDP(const uint8_t* data, uint16_t len);
+uint8_t ESP8266_SendTCP(const uint8_t* data, uint16_t len);
 
 /**
  * @brief 设置透传模式
