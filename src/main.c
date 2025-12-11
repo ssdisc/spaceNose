@@ -64,7 +64,7 @@ uint16_t Read_ADC(uint32_t channel)
  */
 float ADC_to_Voltage(uint16_t adc_value)
 {
-    return (adc_value / 4096.0f) * 3.3f;
+    return (adc_value / 4096.0f) * 3.3f;    
 }
 
 /**
@@ -155,12 +155,12 @@ int main(void)
         HAL_GPIO_TogglePin(GPIOF, GPIO_PIN_10);
 
         /* 读取传感器数据 */
-        uint16_t adc_ch0 = Read_ADC(ADC_CHANNEL_0);
-        float voltage_ch0 = ADC_to_Voltage(adc_ch0);
+        uint16_t adc_ch5 = Read_ADC(ADC_CHANNEL_5);
+        float voltage_ch5 = ADC_to_Voltage(adc_ch5);
 
         /* 打印数据 */
-        printf("[%lu] ADC_CH0: %u, Voltage: %.3f V\r\n",
-               counter++, adc_ch0, voltage_ch0);
+        printf("[%lu] ADC_CH5: %u, Voltage: %.3f V\r\n",
+               counter++, adc_ch5, voltage_ch5);
 
         /* 如果UDP已连接，发送数据到服务器 */
         if (udp_enabled)
@@ -168,7 +168,7 @@ int main(void)
             // 构建JSON格式的数据
             char json_data[128] = {0};
             sprintf(json_data, "{\"counter\":%lu,\"adc\":%u,\"voltage\":%.3f}\n",
-                    counter - 1, adc_ch0, voltage_ch0);
+                    counter - 1, adc_ch5, voltage_ch5);
             
             // 通过UDP发送
             if (!ESP8266_SendUDP((uint8_t*)json_data, strlen(json_data)))
@@ -303,7 +303,7 @@ static void MX_ADC1_Init(void)
     hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
     hadc1.Init.Resolution = ADC_RESOLUTION_12B;
     hadc1.Init.ScanConvMode = DISABLE;
-    hadc1.Init.ContinuousConvMode = DISABLE;
+    hadc1.Init.ContinuousConvMode = ENABLE;
     hadc1.Init.DiscontinuousConvMode = DISABLE;
     hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
     hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
