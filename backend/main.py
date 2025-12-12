@@ -58,6 +58,10 @@ latest_data = {
     "counter": 0,
     "adc": 0,
     "voltage": 0.0,
+    "mq3_adc": 0,
+    "mq3_voltage": 0.0,
+    "alcohol_ppm": 0.0,
+    "sensor_status": 0,
     "timestamp": ""
 }
 
@@ -91,6 +95,10 @@ async def handle_tcp_client(reader: asyncio.StreamReader, writer: asyncio.Stream
                         counter=sensor_data.get("counter", 0),
                         adc=sensor_data.get("adc", 0),
                         voltage=sensor_data.get("voltage", 0.0),
+                        mq3_adc=sensor_data.get("mq3_adc"),
+                        mq3_voltage=sensor_data.get("mq3_voltage"),
+                        alcohol_ppm=sensor_data.get("alcohol_ppm"),
+                        sensor_status=sensor_data.get("sensor_status"),
                         source_ip=peer_ip,
                     )
                     db.close()

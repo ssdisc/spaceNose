@@ -42,13 +42,20 @@ class SensorDataCRUD:
     """传感器数据的CRUD操作类"""
     
     @staticmethod
-    def create(db: Session, counter: int, adc: int, voltage: float, source_ip: str = None) -> Optional[SensorData]:
+    def create(db: Session, counter: int, adc: int, voltage: float,
+               mq3_adc: int = None, mq3_voltage: float = None,
+               alcohol_ppm: float = None, sensor_status: int = None,
+               source_ip: str = None) -> Optional[SensorData]:
         """创建新的传感器数据记录"""
         try:
             sensor_data = SensorData(
                 counter=counter,
                 adc=adc,
                 voltage=voltage,
+                mq3_adc=mq3_adc,
+                mq3_voltage=mq3_voltage,
+                alcohol_ppm=alcohol_ppm,
+                sensor_status=sensor_status,
                 timestamp=datetime.now(),
                 source_ip=source_ip
             )

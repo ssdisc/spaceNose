@@ -4,14 +4,15 @@
  * @brief          : 星际嗅探者 - 传感器主控程序
  * @author         : 苏世鼎
  * @date           : 2025-10-31
- * @version        : 2.0 (中断驱动版)
+ * @version        : 3.0 (集成MQ-3酒精传感器)
  ******************************************************************************
  */
 
 #include "stm32f4xx_hal.h"
 #include <stdio.h>
 #include <string.h>
-#include "esp8266_driver.h" // 引入新的ESP8266驱动
+#include "esp8266_driver.h"   // 引入新的ESP8266驱动
+#include "sensor_manager.h"   // 引入传感器管理模块
 
 /* Private variables */
 UART_HandleTypeDef huart1;  // 调试串口
@@ -88,7 +89,10 @@ int main(void)
     /* 步骤5：初始化ADC */
     MX_ADC1_Init();
 
-    /* 步骤6: 初始化ESP8266驱动 (关键改动) */
+    /* 步骤6：初始化传感器管理器 (集成MQ-3) */
+    SensorManager_Init(&hadc1);
+
+    /* 步骤7: 初始化ESP8266驱动 (关键改动) */
     ESP8266_Init();
 
     /* 等待串口稳定 */
@@ -96,9 +100,10 @@ int main(void)
     
     /* 打印启动信息 */
     printf("\r\n========================================\r\n");
-    printf("  星际嗅探者 - 传感器系统启动 (v2.0)\r\n");
+    printf("  星际嗅探者 - 传感器系统启动 (v3.0)\r\n");
     printf("  STM32F407ZGT6 @ %lu MHz\r\n", SystemCoreClock / 1000000);
     printf("  Developer: 苏世鼎\r\n");
+    printf("  传感器: MQ-3 酒精传感器\r\n");
     printf("========================================\r\n\r\n");
 
     /* 测试ESP8266连接 */
@@ -153,22 +158,60 @@ int main(void)
         HAL_GPIO_TogglePin(GPIOF, GPIO_PIN_9);
         HAL_GPIO_TogglePin(GPIOF, GPIO_PIN_10);
 
-        /* 读取传感器数据 */
+        /* 更新所有传感器数据 */
+        SensorManager_Update();
+
+        /* 获取MQ-3传感器数据 */
+        SensorData_t* mq3_data = SensorManager_GetData(SENSOR_TYPE_MQ3_ALCOHOL);
+
+        /* 读取原有的ADC通道5数据（保持兼容） */
         uint16_t adc_ch5 = Read_ADC(ADC_CHANNEL_5);
         float voltage_ch5 = ADC_to_Voltage(adc_ch5);
 
         /* 打印数据 */
-        printf("[%lu] ADC_CH5: %u, Voltage: %.3f V\r\n",
-               counter++, adc_ch5, voltage_ch5);
+        printf("[%lu] ===== 传感器数据 =====\r\n", counter++);
+        printf("  ADC_CH5: %u, Voltage: %.3f V\r\n", adc_ch5, voltage_ch5);
+
+        if (mq3_data != NULL) {
+            printf("  MQ-3 状态: ");
+            switch(mq3_data->status) {
+                case SENSOR_STATUS_OK:
+                    printf("就绪\r\n");
+                    break;
+                case SENSOR_STATUS_PREHEATING:
+                    printf("预热中...\r\n");
+                    break;
+                default:
+                    printf("错误\r\n");
+                    break;
+            }
+            printf("  MQ-3 ADC: %u\r\n", mq3_data->adc_raw);
+            printf("  MQ-3 电压: %.3f V\r\n", mq3_data->voltage);
+            printf("  酒精浓度: %.2f ppm\r\n", mq3_data->concentration);
+        }
+        printf("============================\r\n\r\n");
 
         /* 如果TCP已连接，发送数据到服务器 */
-        if (tcp_enabled)
+        if (tcp_enabled && mq3_data != NULL)
         {
-            // 构建JSON格式的数据
-            char json_data[128] = {0};
-            sprintf(json_data, "{\"counter\":%lu,\"adc\":%u,\"voltage\":%.3f}\n",
-                    counter - 1, adc_ch5, voltage_ch5);
-            
+            // 构建JSON格式的数据（扩展字段）
+            char json_data[256] = {0};
+            sprintf(json_data,
+                    "{\"counter\":%lu,"
+                    "\"adc\":%u,"
+                    "\"voltage\":%.3f,"
+                    "\"mq3_adc\":%u,"
+                    "\"mq3_voltage\":%.3f,"
+                    "\"alcohol_ppm\":%.2f,"
+                    "\"sensor_status\":%d}\n",
+                    counter - 1,
+                    adc_ch5,
+                    voltage_ch5,
+                    mq3_data->adc_raw,
+                    mq3_data->voltage,
+                    mq3_data->concentration,
+                    mq3_data->status);
+
             // 通过TCP发送
             if (!ESP8266_SendTCP((uint8_t*)json_data, strlen(json_data)))
             {
