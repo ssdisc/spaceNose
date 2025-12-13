@@ -226,12 +226,14 @@ int main(void)
 static uint8_t EnsureWiFiConnected(const char* ssid, const char* password)
 {
     if (ESP8266_IsAPConnected()) {
+        printf("[网络监听] 热点已连接\r\n");
         return 1;
     }
 
     printf("\r\n[网络监听] 热点未连接，开始重连...\r\n");
     if (ESP8266_ConnectWiFi(ssid, password)) {
         printf("   ✓ 热点重连成功\r\n");
+        ESP8266_GetIPAddress();
         return 1;
     }
     printf("   ✗ 热点重连失败，本轮不再重试\r\n");
@@ -244,6 +246,7 @@ static uint8_t EnsureWiFiConnected(const char* ssid, const char* password)
 static uint8_t EnsureTCPConnected(const char* ip, uint16_t port)
 {
     if (ESP8266_IsTCPConnected()) {
+        printf("[网络监听] TCP已连接\r\n");
         return 1;
     }
 

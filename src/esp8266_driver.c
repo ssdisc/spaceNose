@@ -151,17 +151,15 @@ uint8_t ESP8266_IsAPConnected(void) {
     char resp[ESP8266_RX_BUFFER_SIZE] = {0};
 
     ESP8266_ClearBuffer();
-    ESP8266_SendCommand("AT+CWJAP?\r\n");
+    ESP8266_SendCommand("AT+CIPSTATUS\r\n");
 
-    /* 等待模块返回完整响应，再一次性读取缓冲区 */
-    HAL_Delay(300);
+    /* 等待状态返回并取出完整响应 */
+    ESP8266_WaitForString("OK", 1000);
     ESP8266_GetBuffer(resp, sizeof(resp));
-    printf("[CWJAP?] %s\r\n", resp);
+    printf("[CIPSTATUS][WiFi] %s\r\n", resp);
 
-    if (strstr(resp, "No AP")) {
-        return 0;
-    }
-    if (strstr(resp, "CWJAP")) {
+    /* STATUS:2/3 表示已拿到IP（热点连接正常） */
+    if (strstr(resp, "STATUS:2") || strstr(resp, "STATUS:3")) {
         return 1;
     }
     return 0;
