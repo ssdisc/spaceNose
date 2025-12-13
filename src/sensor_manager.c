@@ -24,7 +24,7 @@ SensorData_t g_sensor_data[SENSOR_TYPE_MAX] = {0};
 #define MQ3_R0_CLEAN_AIR        60.0f   // 清洁空气中的R0基准值 (kΩ)
 #define MQ3_PREHEAT_TIME_MS     180000  // 预热时间：3分钟（正式使用需20小时）
 #define MQ3_ADC_CHANNEL         ADC_CHANNEL_5  // 使用PA5 (ADC1_CH5)
-#define MQ3_STABLE_WINDOW_MS    30000   // 稳定性检测窗口时长（采样周期为5s时，覆盖~6次采样）
+#define MQ3_STABLE_WINDOW_MS    90000   // 稳定性检测窗口时长（采样周期为5s时，覆盖~18次采样）
 #define MQ3_STABLE_DELTA_ADC    15      // 窗口内ADC最大波动阈值（越小越严格）
 
 /* 电压分压比（根据你的硬件电路调整） */
