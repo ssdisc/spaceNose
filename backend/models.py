@@ -20,6 +20,10 @@ class SensorData(Base):
     mq3_adc = Column(Integer, nullable=True, comment="MQ-3传感器ADC原始值")
     mq3_voltage = Column(Float, nullable=True, comment="MQ-3传感器电压值")
     alcohol_ppm = Column(Float, nullable=True, comment="酒精浓度(ppm)")
+
+    # NDIR 二氧化碳传感器字段（预留，硬件后续接入）
+    co2_ppm = Column(Float, nullable=True, comment="二氧化碳浓度(ppm)")
+
     sensor_status = Column(Integer, nullable=True, comment="传感器状态(0=正常,1=预热中)")
 
     timestamp = Column(DateTime, default=datetime.now, nullable=False, index=True, comment="数据接收时间")
@@ -38,6 +42,7 @@ class SensorData(Base):
             "mq3_adc": self.mq3_adc,
             "mq3_voltage": self.mq3_voltage,
             "alcohol_ppm": self.alcohol_ppm,
+            "co2_ppm": self.co2_ppm,
             "sensor_status": self.sensor_status,
             "timestamp": self.timestamp.strftime('%Y-%m-%d %H:%M:%S') if self.timestamp else None,
             "source_ip": self.source_ip

@@ -86,6 +86,7 @@
                 <el-form-item label="来源字段">
                   <el-select v-model="realtimeSourceField">
                     <el-option label="alcohol_ppm" value="alcohol_ppm" />
+                    <el-option label="co2_ppm" value="co2_ppm" />
                     <el-option label="voltage" value="voltage" />
                     <el-option label="adc" value="adc" />
                   </el-select>
@@ -654,12 +655,15 @@ export default {
     },
     handleRealtimePayload(payload) {
       const getFieldValue = () => {
-        if (this.realtimeSourceField === 'adc') return Number(payload.adc ?? 0)
-        if (this.realtimeSourceField === 'voltage') return Number(payload.voltage ?? 0)
-        return Number(payload.alcohol_ppm ?? 0)
+        if (this.realtimeSourceField === 'adc') return payload.adc
+        if (this.realtimeSourceField === 'voltage') return payload.voltage
+        if (this.realtimeSourceField === 'co2_ppm') return payload.co2_ppm
+        return payload.alcohol_ppm
       }
 
-      const mappedValue = getFieldValue() * Number(this.realtimeScale || 1)
+      const raw = getFieldValue()
+      const scale = Number(this.realtimeScale || 1)
+      const mappedValue = raw == null ? null : Number(raw) * scale
       const point = {
         t: Date.now(),
         tLabel: payload.timestamp ? String(payload.timestamp).slice(11, 19) : dayjs().format('HH:mm:ss')
@@ -667,7 +671,7 @@ export default {
       GAS_META.forEach((gas) => {
         point[gas.key] = null
       })
-      point[this.realtimeMapGas] = mappedValue
+      point[this.realtimeMapGas] = Number.isNaN(mappedValue) ? null : mappedValue
       this.appendPoint(point)
       this.checkAlerts(point)
     },

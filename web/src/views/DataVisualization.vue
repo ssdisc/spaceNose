@@ -21,7 +21,7 @@
     <el-tabs v-model="activeTab" class="tabs">
       <el-tab-pane label="实时" name="realtime">
         <el-row :gutter="14">
-          <el-col :xs="24" :sm="12" :md="6">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-card class="glass metric-card" shadow="hover">
               <div class="metric-top">
                 <div>
@@ -32,7 +32,7 @@
               <div class="metric-value">{{ sensorData.adc }}</div>
             </el-card>
           </el-col>
-          <el-col :xs="24" :sm="12" :md="6">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-card class="glass metric-card" shadow="hover">
               <div class="metric-top">
                 <div>
@@ -43,7 +43,7 @@
               <div class="metric-value">{{ formatNumber(sensorData.voltage, 3) }}</div>
             </el-card>
           </el-col>
-          <el-col :xs="24" :sm="12" :md="6">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-card class="glass metric-card" shadow="hover">
               <div class="metric-top">
                 <div>
@@ -54,7 +54,7 @@
               <div class="metric-value">{{ sensorData.counter }}</div>
             </el-card>
           </el-col>
-          <el-col :xs="24" :sm="12" :md="6">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-card class="glass metric-card" shadow="hover">
               <div class="metric-top">
                 <div>
@@ -66,6 +66,18 @@
               <div class="metric-value">{{ formatNumber(sensorData.alcohol_ppm, 2) }}</div>
             </el-card>
           </el-col>
+          <el-col :xs="24" :sm="12" :md="8">
+            <el-card class="glass metric-card" shadow="hover">
+              <div class="metric-top">
+                <div>
+                  <div class="metric-label">二氧化碳 CO₂</div>
+                  <div class="metric-unit">ppm</div>
+                </div>
+                <el-tag :type="co2TagType" effect="dark">{{ co2StatusText }}</el-tag>
+              </div>
+              <div class="metric-value">{{ co2Display }}</div>
+            </el-card>
+          </el-col>
         </el-row>
 
         <el-row :gutter="14" class="section">
@@ -73,7 +85,7 @@
             <el-card class="glass chart-card" shadow="hover">
               <template #header>
                 <div class="card-header-row">
-                  <div>酒精浓度趋势（alcohol_ppm）</div>
+                  <div>趋势（alcohol_ppm / co2_ppm）</div>
                   <div class="small-meta">
                     <span>点数：{{ chartPoints.length }}</span>
                     <span v-if="sensorData.timestamp">更新时间：{{ sensorData.timestamp }}</span>
@@ -111,6 +123,10 @@
                 <div class="kv-item">
                   <span class="kv-key">alcohol_ppm</span>
                   <span class="kv-value">{{ formatNumber(sensorData.alcohol_ppm, 2) }} ppm</span>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-key">co2_ppm</span>
+                  <span class="kv-value">{{ sensorData.co2_ppm == null ? '—' : `${formatNumber(sensorData.co2_ppm, 1)} ppm` }}</span>
                 </div>
               </div>
               <div class="hint">
@@ -175,7 +191,7 @@
             <el-card class="glass chart-card" shadow="hover">
               <template #header>
                 <div class="card-header-row">
-                  <div>历史趋势（alcohol_ppm）</div>
+                  <div>历史趋势（alcohol_ppm / co2_ppm）</div>
                   <div class="small-meta">
                     <el-tag v-if="timeFilter.isActive" type="warning" effect="plain">已筛选</el-tag>
                     <span>共 {{ dataLogs.length }} 条</span>
@@ -206,6 +222,11 @@
                 <el-table-column label="酒精 (ppm)" width="110">
                   <template #default="scope">
                     {{ formatNumber(scope.row.alcohol_ppm, 2) }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="CO₂ (ppm)" width="110">
+                  <template #default="scope">
+                    {{ scope.row.co2_ppm == null ? '—' : formatNumber(scope.row.co2_ppm, 1) }}
                   </template>
                 </el-table-column>
                 <el-table-column label="传感器" width="120">
@@ -261,6 +282,7 @@ export default {
         adc: 0,
         voltage: 0,
         alcohol_ppm: 0,
+        co2_ppm: null,
         sensor_status: 3,
         timestamp: ''
       },
@@ -304,30 +326,65 @@ export default {
       if (ppm >= 50) return 'warning'
       return 'success'
     },
+    co2StatusText() {
+      const co2 = this.sensorData.co2_ppm
+      if (co2 == null) return '未接入'
+      const ppm = Number(co2)
+      if (Number.isNaN(ppm)) return '未知'
+      if (ppm >= 10000) return '危险'
+      if (ppm >= 5000) return '预警'
+      return '正常'
+    },
+    co2TagType() {
+      const co2 = this.sensorData.co2_ppm
+      if (co2 == null) return 'info'
+      const ppm = Number(co2)
+      if (Number.isNaN(ppm)) return 'info'
+      if (ppm >= 10000) return 'danger'
+      if (ppm >= 5000) return 'warning'
+      return 'success'
+    },
+    co2Display() {
+      const co2 = this.sensorData.co2_ppm
+      if (co2 == null) return '—'
+      const ppm = Number(co2)
+      if (Number.isNaN(ppm)) return '—'
+      return ppm.toFixed(1)
+    },
     chartOption() {
       const labels = this.chartPoints.map((p) => p.label)
-      const values = this.chartPoints.map((p) => p.value)
+      const alcoholValues = this.chartPoints.map((p) => p.alcohol)
+      const co2Values = this.chartPoints.map((p) => p.co2)
       return {
         tooltip: { trigger: 'axis' },
         legend: {
           top: 0,
-          data: ['alcohol_ppm'],
+          data: ['alcohol_ppm', 'co2_ppm'],
           textStyle: { color: '#475569', fontSize: 12 }
         },
-        grid: { left: 44, right: 18, top: 34, bottom: 34 },
+        grid: { left: 44, right: 44, top: 34, bottom: 34 },
         xAxis: {
           type: 'category',
           data: labels,
           axisLabel: { color: '#64748b' },
           axisLine: { lineStyle: { color: '#cbd5e1' } }
         },
-        yAxis: {
-          type: 'value',
-          name: 'ppm',
-          nameTextStyle: { color: '#64748b' },
-          axisLabel: { color: '#64748b' },
-          splitLine: { lineStyle: { color: '#e2e8f0' } }
-        },
+        yAxis: [
+          {
+            type: 'value',
+            name: '酒精 ppm',
+            nameTextStyle: { color: '#64748b' },
+            axisLabel: { color: '#64748b' },
+            splitLine: { lineStyle: { color: '#e2e8f0' } }
+          },
+          {
+            type: 'value',
+            name: 'CO₂ ppm',
+            nameTextStyle: { color: '#64748b' },
+            axisLabel: { color: '#64748b' },
+            splitLine: { show: false }
+          }
+        ],
         series: [
           {
             name: 'alcohol_ppm',
@@ -337,7 +394,18 @@ export default {
             connectNulls: true,
             lineStyle: { color: '#4f46e5', width: 2 },
             itemStyle: { color: '#4f46e5' },
-            data: values
+            data: alcoholValues
+          },
+          {
+            name: 'co2_ppm',
+            type: 'line',
+            yAxisIndex: 1,
+            smooth: true,
+            showSymbol: false,
+            connectNulls: true,
+            lineStyle: { color: '#0ea5e9', width: 2 },
+            itemStyle: { color: '#0ea5e9' },
+            data: co2Values
           }
         ]
       }
@@ -390,7 +458,8 @@ export default {
       const adc = row?.adc ?? '—'
       const voltage = this.formatNumber(row?.voltage, 3)
       const ppm = this.formatNumber(row?.alcohol_ppm, 2)
-      return `adc=${adc}, voltage=${voltage}V, alcohol=${ppm}ppm`
+      const co2 = row?.co2_ppm == null ? '—' : this.formatNumber(row?.co2_ppm, 1)
+      return `adc=${adc}, voltage=${voltage}V, alcohol=${ppm}ppm, co2=${co2}ppm`
     },
 
     apiBaseUrl() {
@@ -490,15 +559,17 @@ export default {
         .slice(-this.maxDataPoints)
         .map((item) => ({
           label: this.formatTimeLabel(item.timestamp),
-          value: Number(item.alcohol_ppm ?? 0)
+          alcohol: item.alcohol_ppm == null ? null : Number(item.alcohol_ppm),
+          co2: item.co2_ppm == null ? null : Number(item.co2_ppm)
         }))
       this.chartPoints = seeded
     },
 
-    pushChartPoint(timestamp, value) {
+    pushChartPoint(timestamp, alcoholPpm, co2Ppm) {
       this.chartPoints.push({
         label: this.formatTimeLabel(timestamp),
-        value: Number(value ?? 0)
+        alcohol: alcoholPpm == null ? null : Number(alcoholPpm),
+        co2: co2Ppm == null ? null : Number(co2Ppm)
       })
       if (this.chartPoints.length > this.maxDataPoints) {
         this.chartPoints.shift()
@@ -521,6 +592,7 @@ export default {
             adc: item.adc ?? 0,
             voltage: item.voltage ?? 0,
             alcohol_ppm: item.alcohol_ppm ?? 0,
+            co2_ppm: item.co2_ppm ?? null,
             sensor_status: item.sensor_status ?? 3,
             timestamp: item.timestamp ?? ''
           }))
@@ -545,6 +617,7 @@ export default {
             adc: item.adc ?? 0,
             voltage: item.voltage ?? 0,
             alcohol_ppm: item.alcohol_ppm ?? 0,
+            co2_ppm: item.co2_ppm ?? null,
             sensor_status: item.sensor_status ?? 3,
             timestamp: item.timestamp ?? ''
           }))
@@ -593,6 +666,7 @@ export default {
             adc: data.adc ?? 0,
             voltage: data.voltage ?? 0,
             alcohol_ppm: data.alcohol_ppm ?? 0,
+            co2_ppm: data.co2_ppm ?? null,
             sensor_status: data.sensor_status !== undefined ? data.sensor_status : 3,
             timestamp: data.timestamp ?? ''
           }
@@ -605,7 +679,7 @@ export default {
             if (!this.timeFilter.isActive && this.dataLogs.length > this.historyLimit) {
               this.dataLogs.pop()
             }
-            this.pushChartPoint(normalized.timestamp, normalized.alcohol_ppm)
+            this.pushChartPoint(normalized.timestamp, normalized.alcohol_ppm, normalized.co2_ppm)
           }
         } catch (error) {
           // ignore

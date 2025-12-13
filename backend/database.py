@@ -2,6 +2,7 @@
 数据库操作 - 处理数据库连接和CRUD操作
 """
 from sqlalchemy import create_engine, desc
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
 from models import Base, SensorData
@@ -24,11 +25,36 @@ def init_db():
     """初始化数据库，创建所有表"""
     try:
         Base.metadata.create_all(bind=engine)
+        _migrate_schema(engine)
         print("✓ 数据库表创建成功")
         return True
     except SQLAlchemyError as e:
         print(f"✗ 数据库初始化失败: {e}")
         return False
+
+def _migrate_schema(db_engine):
+    """
+    轻量级 schema 迁移：为已有表补齐新增字段。
+    仅用于开发阶段，避免每次变更都手动改表。
+    """
+    inspector = inspect(db_engine)
+    try:
+        columns = {col["name"] for col in inspector.get_columns("sensor_data")}
+    except Exception:
+        return
+
+    if "co2_ppm" not in columns:
+        dialect = db_engine.dialect.name
+        if dialect == "mysql":
+            ddl = "ALTER TABLE sensor_data ADD COLUMN co2_ppm FLOAT NULL COMMENT '二氧化碳浓度(ppm)'"
+        else:
+            ddl = "ALTER TABLE sensor_data ADD COLUMN co2_ppm FLOAT"
+        try:
+            with db_engine.begin() as conn:
+                conn.execute(text(ddl))
+            print("✓ 数据库迁移：已添加字段 co2_ppm")
+        except Exception as e:
+            print(f"⚠ 数据库迁移失败（co2_ppm）: {e}")
 
 def get_db():
     """获取数据库会话的依赖注入函数"""
@@ -44,7 +70,7 @@ class SensorDataCRUD:
     @staticmethod
     def create(db: Session, counter: int, adc: int, voltage: float,
                mq3_adc: int = None, mq3_voltage: float = None,
-               alcohol_ppm: float = None, sensor_status: int = None,
+               alcohol_ppm: float = None, co2_ppm: float = None, sensor_status: int = None,
                source_ip: str = None) -> Optional[SensorData]:
         """创建新的传感器数据记录"""
         try:
@@ -55,6 +81,7 @@ class SensorDataCRUD:
                 mq3_adc=mq3_adc,
                 mq3_voltage=mq3_voltage,
                 alcohol_ppm=alcohol_ppm,
+                co2_ppm=co2_ppm,
                 sensor_status=sensor_status,
                 timestamp=datetime.now(),
                 source_ip=source_ip

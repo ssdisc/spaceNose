@@ -61,6 +61,7 @@ latest_data = {
     "mq3_adc": 0,
     "mq3_voltage": 0.0,
     "alcohol_ppm": 0.0,
+    "co2_ppm": None,
     "sensor_status": 0,
     "timestamp": ""
 }
@@ -82,6 +83,7 @@ async def handle_tcp_client(reader: asyncio.StreamReader, writer: asyncio.Stream
                     continue
                 sensor_data = json.loads(json_str)
                 sensor_data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                sensor_data["co2_ppm"] = sensor_data.get("co2_ppm")
 
                 global latest_data
                 latest_data = sensor_data
@@ -98,6 +100,7 @@ async def handle_tcp_client(reader: asyncio.StreamReader, writer: asyncio.Stream
                         mq3_adc=sensor_data.get("mq3_adc"),
                         mq3_voltage=sensor_data.get("mq3_voltage"),
                         alcohol_ppm=sensor_data.get("alcohol_ppm"),
+                        co2_ppm=sensor_data.get("co2_ppm"),
                         sensor_status=sensor_data.get("sensor_status"),
                         source_ip=peer_ip,
                     )
