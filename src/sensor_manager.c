@@ -24,6 +24,8 @@ SensorData_t g_sensor_data[SENSOR_TYPE_MAX] = {0};
 #define MQ3_R0_CLEAN_AIR        60.0f   // 清洁空气中的R0基准值 (kΩ)
 #define MQ3_PREHEAT_TIME_MS     180000  // 预热时间：3分钟（正式使用需20小时）
 #define MQ3_ADC_CHANNEL         ADC_CHANNEL_5  // 使用PA5 (ADC1_CH5)
+#define MQ3_STABLE_WINDOW_MS    30000   // 稳定性检测窗口时长（采样周期为5s时，覆盖~6次采样）
+#define MQ3_STABLE_DELTA_ADC    15      // 窗口内ADC最大波动阈值（越小越严格）
 
 /* 电压分压比（根据你的硬件电路调整） */
 // 方案：10kΩ（上臂，靠近AO） + 15kΩ（下臂，接地） ⇒ 5V → 3.0V，ADC安全
@@ -66,12 +68,42 @@ void SensorManager_Update(void)
 
     /* 检查预热状态 */
     if (!mq3_config.is_preheated) {
-        uint32_t elapsed = HAL_GetTick() - mq3_config.preheat_start_time;
-        if (elapsed >= MQ3_PREHEAT_TIME_MS) {
+        uint32_t now = mq3_data->timestamp;
+        uint32_t elapsed = now - mq3_config.preheat_start_time;
+
+        /* 窗口初始化 */
+        if (mq3_config.stable_window_start == 0) {
+            mq3_config.stable_window_start = now;
+            mq3_config.stable_adc_min = mq3_data->adc_raw;
+            mq3_config.stable_adc_max = mq3_data->adc_raw;
+        }
+
+        /* 更新当前窗口的波动范围 */
+        if (mq3_data->adc_raw < mq3_config.stable_adc_min) {
+            mq3_config.stable_adc_min = mq3_data->adc_raw;
+        }
+        if (mq3_data->adc_raw > mq3_config.stable_adc_max) {
+            mq3_config.stable_adc_max = mq3_data->adc_raw;
+        }
+
+        bool time_ready = (elapsed >= MQ3_PREHEAT_TIME_MS);
+        bool window_ready = (now - mq3_config.stable_window_start) >= MQ3_STABLE_WINDOW_MS;
+        bool is_stable = window_ready &&
+            ((mq3_config.stable_adc_max - mq3_config.stable_adc_min) <= MQ3_STABLE_DELTA_ADC);
+
+        if (time_ready && is_stable) {
+            /* 预热完成且读数稳定，自动校准 R0 */
+            MQ3_Calibrate();
             mq3_config.is_preheated = true;
             mq3_data->status = SENSOR_STATUS_OK;
-            printf("[MQ-3] 预热完成！\r\n");
+            printf("[MQ-3] 预热完成且读数稳定，R0 已校准。\r\n");
         } else {
+            /* 若窗口已结束但不稳定，重置窗口重新观察 */
+            if (window_ready && !is_stable) {
+                mq3_config.stable_window_start = now;
+                mq3_config.stable_adc_min = mq3_data->adc_raw;
+                mq3_config.stable_adc_max = mq3_data->adc_raw;
+            }
             mq3_data->status = SENSOR_STATUS_PREHEATING;
         }
     } else {
@@ -115,6 +147,9 @@ void MQ3_Init(uint32_t adc_channel)
     mq3_config.r0 = MQ3_R0_CLEAN_AIR;
     mq3_config.is_preheated = false;
     mq3_config.preheat_start_time = HAL_GetTick();
+    mq3_config.stable_window_start = 0;
+    mq3_config.stable_adc_min = 0xFFFF;
+    mq3_config.stable_adc_max = 0;
 
     printf("[MQ-3] 初始化成功，开始预热...\r\n");
     printf("[MQ-3] 预计预热时间: %d 秒\r\n", MQ3_PREHEAT_TIME_MS / 1000);

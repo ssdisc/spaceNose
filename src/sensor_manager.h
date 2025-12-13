@@ -51,6 +51,9 @@ typedef struct {
     float r0;                     // 传感器在清洁空气中的基准电阻 (kΩ)
     bool is_preheated;            // 是否已预热
     uint32_t preheat_start_time;  // 预热开始时间
+    uint32_t stable_window_start; // 稳定性检测窗口起点
+    uint16_t stable_adc_min;      // 窗口内ADC最小值
+    uint16_t stable_adc_max;      // 窗口内ADC最大值
 } MQ3_Config_t;
 
 /* 公共API */

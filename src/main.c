@@ -44,29 +44,7 @@ int _write(int file, char *ptr, int len)
 /**
  * @brief  读取ADC值
  */
-uint16_t Read_ADC(uint32_t channel)
-{
-    ADC_ChannelConfTypeDef sConfig = {0};
-    sConfig.Channel = channel;
-    sConfig.Rank = 1;
-    sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
-    HAL_ADC_ConfigChannel(&hadc1, &sConfig);
-
-    HAL_ADC_Start(&hadc1);
-    HAL_ADC_PollForConversion(&hadc1, 100);
-    uint16_t adc_value = HAL_ADC_GetValue(&hadc1);
-    HAL_ADC_Stop(&hadc1);
-
-    return adc_value;
-}
-
-/**
- * @brief  ADC转电压
- */
-float ADC_to_Voltage(uint16_t adc_value)
-{
-    return (adc_value / 4096.0f) * 3.3f;    
-}
+// 兼容旧接口：如需手动读取，请使用传感器管理器接口（MQ3_ReadADC/MQ3_ReadVoltage）
 
 /**
  * @brief  主程序
@@ -164,13 +142,8 @@ int main(void)
         /* 获取MQ-3传感器数据 */
         SensorData_t* mq3_data = SensorManager_GetData(SENSOR_TYPE_MQ3_ALCOHOL);
 
-        /* 读取原有的ADC通道5数据（保持兼容） */
-        uint16_t adc_ch5 = Read_ADC(ADC_CHANNEL_5);
-        float voltage_ch5 = ADC_to_Voltage(adc_ch5);
-
         /* 打印数据 */
         printf("[%lu] ===== 传感器数据 =====\r\n", counter++);
-        printf("  ADC_CH5: %u, Voltage: %.3f V\r\n", adc_ch5, voltage_ch5);
 
         if (mq3_data != NULL) {
             printf("  MQ-3 状态: ");
@@ -205,8 +178,6 @@ int main(void)
                     "\"alcohol_ppm\":%.2f,"
                     "\"sensor_status\":%d}\n",
                     counter - 1,
-                    adc_ch5,
-                    voltage_ch5,
                     mq3_data->adc_raw,
                     mq3_data->voltage,
                     mq3_data->concentration,
