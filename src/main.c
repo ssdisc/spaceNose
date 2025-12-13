@@ -180,8 +180,10 @@ int main(void)
                     counter - 1,
                     mq3_data->adc_raw,
                     mq3_data->voltage,
-                    mq3_data->concentration,
-                    mq3_data->status);
+                    mq3_data->adc_raw,        // mq3_adc (添加)
+                    mq3_data->voltage,        // mq3_voltage (添加)
+                    mq3_data->concentration,  // alcohol_ppm
+                    mq3_data->status);        // sensor_status
 
             // 通过TCP发送
             if (!ESP8266_SendTCP((uint8_t*)json_data, strlen(json_data)))

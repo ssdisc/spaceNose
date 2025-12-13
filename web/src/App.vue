@@ -2,9 +2,15 @@
   <div id="app">
     <div class="header">
       <h1>🛰️ 星际嗅探者 - 实时数据监控</h1>
-      <div class="status">
-        <span class="status-indicator" :class="{ connected: isConnected }"></span>
-        <span>{{ connectionStatus }}</span>
+      <div class="status-group">
+        <div class="status">
+          <span class="status-indicator" :class="{ connected: isConnected }"></span>
+          <span>{{ connectionStatus }}</span>
+        </div>
+        <div class="status sensor-status">
+          <span class="sensor-indicator" :class="sensorStatusClass"></span>
+          <span>传感器: {{ sensorStatusText }}</span>
+        </div>
       </div>
       <div class="nav-tabs">
         <button
@@ -164,6 +170,7 @@ export default {
         adc: 0,
         voltage: 0.0,
         alcohol_ppm: 0.0,
+        sensor_status: 0,
         timestamp: ''
       },
       activeTab: 'realtime',
@@ -186,6 +193,26 @@ export default {
   computed: {
     connectionStatus() {
       return this.isConnected ? '已连接' : '未连接'
+    },
+    sensorStatusText() {
+      // 确保sensor_status是数字类型
+      const status = Number(this.sensorData.sensor_status)
+      const statusMap = {
+        0: '就绪',
+        1: '预热中',
+        2: '错误',
+        3: '未就绪'
+      }
+      return statusMap[status] !== undefined ? statusMap[status] : '未知'
+    },
+    sensorStatusClass() {
+      const classMap = {
+        0: 'sensor-ready',      // 就绪 - 绿色
+        1: 'sensor-preheating', // 预热中 - 黄色
+        2: 'sensor-error',      // 错误 - 红色
+        3: 'sensor-not-ready'   // 未就绪 - 灰色
+      }
+      return classMap[this.sensorData.sensor_status] || 'sensor-unknown'
     }
   },
   mounted() {
@@ -232,6 +259,7 @@ export default {
             adc: item.adc ?? 0,
             voltage: item.voltage ?? 0,
             alcohol_ppm: item.alcohol_ppm ?? 0,
+            sensor_status: item.sensor_status ?? 0,
             timestamp: item.timestamp ?? ''
           }))
           this.timeFilter.isActive = false
@@ -257,6 +285,7 @@ export default {
               adc: item.adc ?? 0,
               voltage: item.voltage ?? 0,
               alcohol_ppm: item.alcohol_ppm ?? 0,
+              sensor_status: item.sensor_status ?? 0,
               timestamp: item.timestamp ?? ''
             }))
             this.timeFilter.isActive = true
@@ -415,9 +444,13 @@ export default {
         try {
           const data = JSON.parse(event.data)
           console.log('收到数据:', data)
-          
-          // 更新当前数据
-          this.sensorData = data
+          console.log('sensor_status值:', data.sensor_status, '类型:', typeof data.sensor_status)
+
+          // 更新当前数据，确保sensor_status有默认值
+          this.sensorData = {
+            ...data,
+            sensor_status: data.sensor_status !== undefined ? data.sensor_status : 3
+          }
 
           const withinFilter = this.isWithinFilter(data.timestamp)
           
@@ -479,16 +512,16 @@ export default {
     },
 
     updateChart(data, options = {}) {
-      // 更新数据数组
-      this.chartData.labels.push(data.counter)
+      // 更新数据数组，存储时间戳而不是counter
+      this.chartData.labels.push(data.timestamp)
       this.chartData.concentrationData.push(data.alcohol_ppm ?? 0)
-      
+
       // 限制数据点数量
       if (!options.skipTrim && this.chartData.labels.length > this.maxDataPoints) {
         this.chartData.labels.shift()
         this.chartData.concentrationData.shift()
       }
-      
+
       // 绘制图表
       if (!options.skipDraw) {
         this.drawChart()
@@ -497,80 +530,134 @@ export default {
     
     drawChart() {
       if (!this.chart) return
-      
+
       const canvas = this.chart.canvas
       const ctx = this.chart.ctx
-      
+
       // 设置画布大小
       canvas.width = canvas.offsetWidth
       canvas.height = 300
-      
+
       const width = canvas.width
       const height = canvas.height
-      const padding = 40
-      
+      const padding = 60  // 增加padding以容纳时间标签
+      const topPadding = 30
+
       // 清空画布
       ctx.clearRect(0, 0, width, height)
-      
+
       // 绘制背景
       ctx.fillStyle = '#f8f9fa'
       ctx.fillRect(0, 0, width, height)
-      
+
       if (this.chartData.concentrationData.length === 0) return
-      
-      // 计算缩放比例
-      const maxConcentration = Math.max(...this.chartData.concentrationData, 1)
-      const minConcentration = 0
-      const concentrationRange = Math.max(maxConcentration - minConcentration, 1)
-      
-      const xStep = (width - 2 * padding) / (this.maxDataPoints - 1)
-      const yScale = (height - 2 * padding) / concentrationRange
-      
-      // 绘制网格线
+
+      // 计算Y轴范围（自适应）
+      const dataValues = this.chartData.concentrationData
+      const maxConcentration = Math.max(...dataValues)
+      const minConcentration = Math.min(...dataValues)
+
+      // 添加10%的padding使图表更美观
+      const dataRange = maxConcentration - minConcentration
+      const paddingPercent = 0.1
+      const yMin = Math.max(0, minConcentration - dataRange * paddingPercent)
+      const yMax = maxConcentration + dataRange * paddingPercent
+      const concentrationRange = Math.max(yMax - yMin, 0.1)  // 避免除以0
+
+      const dataCount = this.chartData.concentrationData.length
+      const xStep = dataCount > 1 ? (width - 2 * padding) / (dataCount - 1) : 0
+      const yScale = (height - topPadding - padding) / concentrationRange
+
+      // 绘制网格线和Y轴刻度
       ctx.strokeStyle = '#dee2e6'
       ctx.lineWidth = 1
-      for (let i = 0; i <= 4; i++) {
-        const y = padding + i * (height - 2 * padding) / 4
+      for (let i = 0; i <= 5; i++) {
+        const y = topPadding + i * (height - topPadding - padding) / 5
         ctx.beginPath()
         ctx.moveTo(padding, y)
         ctx.lineTo(width - padding, y)
         ctx.stroke()
-        
+
         // 绘制Y轴刻度
         ctx.fillStyle = '#6c757d'
         ctx.font = '12px Arial'
-        const value = (maxConcentration - i * concentrationRange / 4).toFixed(2)
+        const value = (yMax - i * concentrationRange / 5).toFixed(2)
         ctx.fillText(value + ' ppm', 5, y + 4)
       }
-      
+
       // 绘制浓度曲线
       ctx.strokeStyle = '#007bff'
       ctx.lineWidth = 2
       ctx.beginPath()
-      
+
       this.chartData.concentrationData.forEach((ppm, index) => {
         const x = padding + index * xStep
-        const y = height - padding - (ppm - minConcentration) * yScale
-        
+        const y = height - padding - (ppm - yMin) * yScale
+
         if (index === 0) {
           ctx.moveTo(x, y)
         } else {
           ctx.lineTo(x, y)
         }
       })
-      
+
       ctx.stroke()
-      
+
       // 绘制数据点
       ctx.fillStyle = '#007bff'
       this.chartData.concentrationData.forEach((ppm, index) => {
         const x = padding + index * xStep
-        const y = height - padding - (ppm - minConcentration) * yScale
-        
+        const y = height - padding - (ppm - yMin) * yScale
+
         ctx.beginPath()
         ctx.arc(x, y, 3, 0, 2 * Math.PI)
         ctx.fill()
       })
+
+      // 绘制X轴时间标签
+      ctx.fillStyle = '#6c757d'
+      ctx.font = '11px Arial'
+      ctx.textAlign = 'center'
+
+      // 根据数据点数量决定显示多少个时间标签
+      const maxLabels = Math.min(dataCount, 5)
+      const labelStep = dataCount > 1 ? Math.floor((dataCount - 1) / (maxLabels - 1)) : 1
+
+      for (let i = 0; i < dataCount; i += labelStep) {
+        if (i >= dataCount) break
+
+        const timestamp = this.chartData.labels[i]
+        const x = padding + i * xStep
+        const y = height - padding + 20
+
+        // 格式化时间显示（只显示时:分:秒）
+        const timeStr = this.formatTimeForChart(timestamp)
+        ctx.fillText(timeStr, x, y)
+      }
+
+      // 确保显示最后一个点的时间
+      if (dataCount > 1 && (dataCount - 1) % labelStep !== 0) {
+        const lastIndex = dataCount - 1
+        const timestamp = this.chartData.labels[lastIndex]
+        const x = padding + lastIndex * xStep
+        const y = height - padding + 20
+        const timeStr = this.formatTimeForChart(timestamp)
+        ctx.fillText(timeStr, x, y)
+      }
+
+      ctx.textAlign = 'left'  // 恢复默认对齐方式
+    },
+
+    formatTimeForChart(timestamp) {
+      if (!timestamp) return ''
+      const date = this.parseTimestamp(timestamp)
+      if (!date) return ''
+
+      const hours = String(date.getHours()).padStart(2, '0')
+      const minutes = String(date.getMinutes()).padStart(2, '0')
+      const seconds = String(date.getSeconds()).padStart(2, '0')
+
+      return `${hours}:${minutes}:${seconds}`
     }
   }
 }
@@ -604,6 +691,76 @@ export default {
   text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
 }
 
+.status-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.1em;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  backdrop-filter: blur(10px);
+}
+
+.status-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #dc3545;
+  box-shadow: 0 0 10px rgba(220, 53, 69, 0.5);
+  animation: pulse 2s infinite;
+}
+
+.status-indicator.connected {
+  background: #28a745;
+  box-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
+}
+
+.sensor-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+
+.sensor-indicator.sensor-ready {
+  background: #28a745;
+  box-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
+}
+
+.sensor-indicator.sensor-preheating {
+  background: #ffc107;
+  box-shadow: 0 0 10px rgba(255, 193, 7, 0.5);
+}
+
+.sensor-indicator.sensor-error {
+  background: #dc3545;
+  box-shadow: 0 0 10px rgba(220, 53, 69, 0.5);
+}
+
+.sensor-indicator.sensor-not-ready {
+  background: #6c757d;
+  box-shadow: 0 0 10px rgba(108, 117, 125, 0.5);
+}
+
+.sensor-indicator.sensor-unknown {
+  background: #868e96;
+  box-shadow: 0 0 10px rgba(134, 142, 150, 0.5);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .nav-tabs {
   margin-top: 15px;
   display: flex;
@@ -630,33 +787,6 @@ export default {
 
 .nav-btn:hover {
   transform: translateY(-1px);
-}
-
-.status {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  font-size: 1.2em;
-}
-
-.status-indicator {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #dc3545;
-  box-shadow: 0 0 10px rgba(220, 53, 69, 0.5);
-  animation: pulse 2s infinite;
-}
-
-.status-indicator.connected {
-  background: #28a745;
-  box-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
 }
 
 .container {
