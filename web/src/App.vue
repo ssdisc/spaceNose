@@ -57,7 +57,7 @@
 
       <!-- 历史数据图表 -->
       <div class="chart-container">
-        <h2>📈 实时数据趋势</h2>
+        <h2>📈 酒精浓度趋势</h2>
         <div class="chart">
           <canvas ref="chartCanvas"></canvas>
         </div>
@@ -75,6 +75,65 @@
               <option :value="100">最近 100 条</option>
             </select>
             <button class="refresh-button" @click="fetchRecentData">刷新</button>
+          </div>
+        </div>
+        <div class="filter-panel">
+          <div class="quick-filter">
+            <span class="filter-label">快速筛选：</span>
+            <button
+              class="chip"
+              :class="{ active: timeFilter.preset === 'hour' && timeFilter.isActive }"
+              @click="setQuickRange('hour')"
+            >
+              本小时
+            </button>
+            <button
+              class="chip"
+              :class="{ active: timeFilter.preset === 'day' && timeFilter.isActive }"
+              @click="setQuickRange('day')"
+            >
+              今日
+            </button>
+            <button
+              class="chip"
+              :class="{ active: timeFilter.preset === 'month' && timeFilter.isActive }"
+              @click="setQuickRange('month')"
+            >
+              本月
+            </button>
+            <button
+              class="chip"
+              :class="{ active: timeFilter.preset === 'year' && timeFilter.isActive }"
+              @click="setQuickRange('year')"
+            >
+              今年
+            </button>
+          </div>
+          <div class="range-filter">
+            <div class="range-input">
+              <label>开始时间</label>
+              <input
+                type="datetime-local"
+                v-model="timeFilter.start"
+                step="3600"
+                @change="onFilterInputChange"
+              />
+            </div>
+            <div class="range-input">
+              <label>结束时间</label>
+              <input
+                type="datetime-local"
+                v-model="timeFilter.end"
+                step="3600"
+                @change="onFilterInputChange"
+              />
+            </div>
+            <div class="range-actions">
+              <button class="refresh-button" @click="applyTimeFilter">筛选</button>
+              <button class="text-button" @click="resetTimeFilter" :disabled="!timeFilter.isActive">
+                清除筛选
+              </button>
+            </div>
           </div>
         </div>
         <div class="log-content">
@@ -104,6 +163,7 @@ export default {
         counter: 0,
         adc: 0,
         voltage: 0.0,
+        alcohol_ppm: 0.0,
         timestamp: ''
       },
       activeTab: 'realtime',
@@ -111,11 +171,16 @@ export default {
       chart: null,
       chartData: {
         labels: [],
-        voltageData: [],
-        adcData: []
+        concentrationData: []
       },
       maxDataPoints: 20,
-      historyLimit: 50
+      historyLimit: 50,
+      timeFilter: {
+        start: '',
+        end: '',
+        preset: 'hour',
+        isActive: false
+      }
     }
   },
   computed: {
@@ -124,6 +189,7 @@ export default {
     }
   },
   mounted() {
+    this.initializeTimeFilter()
     this.initChart()
     this.fetchRecentData()
     this.connectWebSocket()
@@ -137,7 +203,11 @@ export default {
     switchTab(tab) {
       this.activeTab = tab
       if (tab === 'history') {
-        this.fetchRecentData()
+        if (this.timeFilter.isActive && this.timeFilter.start && this.timeFilter.end) {
+          this.applyTimeFilter()
+        } else {
+          this.fetchRecentData()
+        }
       } else {
         // 重新挂载实时视图时重建画布并重绘
         this.$nextTick(() => {
@@ -157,30 +227,174 @@ export default {
         const response = await fetch(`${this.apiBaseUrl()}/api/data/recent?limit=${this.historyLimit}`)
         const json = await response.json()
         if (json.success && Array.isArray(json.data)) {
-          // 填充数据库最新记录（后端已按时间倒序返回）
-          this.dataLogs = json.data.map(item => ({
+          const normalized = json.data.map(item => ({
             counter: item.counter ?? 0,
             adc: item.adc ?? 0,
             voltage: item.voltage ?? 0,
+            alcohol_ppm: item.alcohol_ppm ?? 0,
             timestamp: item.timestamp ?? ''
           }))
-
-          // 若 WebSocket 尚未推送，用最新一条作为当前显示值（仅实时页时使用）
-          if (this.activeTab === 'realtime' && this.dataLogs.length > 0) {
-            this.sensorData = this.dataLogs[0]
-          }
-
-          // 重新绘制图表，按时间顺序取最近 maxDataPoints 条
-          this.resetChart()
-          const chartSeed = [...this.dataLogs].reverse().slice(-this.maxDataPoints)
-          chartSeed.forEach(data => this.updateChart(data, { skipTrim: true }))
-          this.drawChart()
+          this.timeFilter.isActive = false
+          this.timeFilter.preset = 'hour'
+          this.applyHistoryData(normalized)
         } else {
           console.warn('获取历史数据失败，返回值异常:', json)
         }
       } catch (error) {
         console.error('加载历史数据失败:', error)
       }
+    },
+
+    async fetchDataByRange(start, end) {
+      try {
+        const response = await fetch(
+          `${this.apiBaseUrl()}/api/data/range?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+        )
+        const json = await response.json()
+          if (json.success && Array.isArray(json.data)) {
+            const normalized = json.data.map(item => ({
+              counter: item.counter ?? 0,
+              adc: item.adc ?? 0,
+              voltage: item.voltage ?? 0,
+              alcohol_ppm: item.alcohol_ppm ?? 0,
+              timestamp: item.timestamp ?? ''
+            }))
+            this.timeFilter.isActive = true
+            this.applyHistoryData(normalized)
+        } else {
+          console.warn('按时间筛选失败:', json)
+        }
+      } catch (error) {
+        console.error('按时间筛选失败:', error)
+      }
+    },
+
+    applyHistoryData(logs) {
+      const sortedLogs = [...logs].sort((a, b) => {
+        const aTime = this.parseTimestamp(a.timestamp)
+        const bTime = this.parseTimestamp(b.timestamp)
+        if (aTime && bTime) {
+          return bTime - aTime
+        }
+        return 0
+      })
+      this.dataLogs = sortedLogs
+
+      // 若 WebSocket 尚未推送，用最新一条作为当前显示值（仅实时页时使用）
+      if (this.activeTab === 'realtime' && this.dataLogs.length > 0) {
+        this.sensorData = this.dataLogs[0]
+      }
+
+      // 重新绘制图表，按时间顺序取最近 maxDataPoints 条
+      this.resetChart()
+      const chartSeed = [...this.dataLogs]
+        .slice()
+        .sort((a, b) => {
+          const aTime = this.parseTimestamp(a.timestamp)
+          const bTime = this.parseTimestamp(b.timestamp)
+          if (aTime && bTime) {
+            return aTime - bTime
+          }
+          return 0
+        })
+        .slice(-this.maxDataPoints)
+      chartSeed.forEach(data => this.updateChart(data, { skipTrim: true, skipDraw: true }))
+      this.drawChart()
+    },
+
+    initializeTimeFilter() {
+      const now = new Date()
+      const start = new Date(now)
+      start.setMinutes(0, 0, 0)
+      this.timeFilter.start = this.formatDateTimeForInput(start)
+      this.timeFilter.end = this.formatDateTimeForInput(now)
+      this.timeFilter.preset = 'hour'
+      this.timeFilter.isActive = false
+    },
+
+    setQuickRange(preset) {
+      const now = new Date()
+      let start = new Date(now)
+
+      if (preset === 'hour') {
+        start.setMinutes(0, 0, 0)
+      } else if (preset === 'day') {
+        start.setHours(0, 0, 0, 0)
+      } else if (preset === 'month') {
+        start.setDate(1)
+        start.setHours(0, 0, 0, 0)
+      } else if (preset === 'year') {
+        start.setMonth(0, 1)
+        start.setHours(0, 0, 0, 0)
+      }
+
+      this.timeFilter.start = this.formatDateTimeForInput(start)
+      this.timeFilter.end = this.formatDateTimeForInput(now)
+      this.timeFilter.preset = preset
+      this.applyTimeFilter()
+    },
+
+    onFilterInputChange() {
+      this.timeFilter.preset = 'custom'
+      this.timeFilter.isActive = false
+    },
+
+    applyTimeFilter() {
+      if (!this.timeFilter.start || !this.timeFilter.end) {
+        console.warn('请先选择完整的开始和结束时间')
+        return
+      }
+      const start = this.formatInputToApi(this.timeFilter.start)
+      const end = this.formatInputToApi(this.timeFilter.end)
+      if (!start || !end) {
+        console.warn('时间格式不合法')
+        return
+      }
+      const startDate = this.parseTimestamp(start)
+      const endDate = this.parseTimestamp(end)
+      if (startDate && endDate && startDate > endDate) {
+        console.warn('开始时间不能晚于结束时间')
+        return
+      }
+      this.fetchDataByRange(start, end)
+    },
+
+    resetTimeFilter() {
+      this.initializeTimeFilter()
+      this.fetchRecentData()
+    },
+
+    formatDateTimeForInput(date) {
+      const pad = (num) => String(num).padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+    },
+
+    formatInputToApi(value) {
+      if (!value) return ''
+      const parsed = new Date(value)
+      if (Number.isNaN(parsed.getTime())) return ''
+      return this.formatDateTimeForApi(parsed)
+    },
+
+    formatDateTimeForApi(date) {
+      const pad = (num) => String(num).padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+    },
+
+    parseTimestamp(ts) {
+      if (!ts) return null
+      const normalized = ts.replace(' ', 'T')
+      const parsed = new Date(normalized)
+      return Number.isNaN(parsed.getTime()) ? null : parsed
+    },
+
+    isWithinFilter(timestamp) {
+      if (!this.timeFilter.isActive || !this.timeFilter.start || !this.timeFilter.end) return true
+      const start = this.parseTimestamp(this.formatInputToApi(this.timeFilter.start))
+      const end = this.parseTimestamp(this.formatInputToApi(this.timeFilter.end))
+      const target = this.parseTimestamp(timestamp)
+      if (!start || !end || !target) return true
+      return target >= start && target <= end
     },
 
     connectWebSocket() {
@@ -204,15 +418,21 @@ export default {
           
           // 更新当前数据
           this.sensorData = data
+
+          const withinFilter = this.isWithinFilter(data.timestamp)
           
-          // 添加到日志（最多保留 historyLimit 条）
-          this.dataLogs.unshift(data)
-          if (this.dataLogs.length > this.historyLimit) {
-            this.dataLogs.pop()
+          // 添加到日志（筛选模式只记录落在区间内的数据）
+          if (!this.timeFilter.isActive || withinFilter) {
+            this.dataLogs.unshift(data)
+            if (!this.timeFilter.isActive && this.dataLogs.length > this.historyLimit) {
+              this.dataLogs.pop()
+            }
           }
           
-          // 更新图表
-          this.updateChart(data)
+          // 更新图表，筛选模式下仅绘制区间内数据
+          if (!this.timeFilter.isActive || withinFilter) {
+            this.updateChart(data)
+          }
           
         } catch (error) {
           console.error('解析数据失败:', error)
@@ -254,26 +474,25 @@ export default {
     resetChart() {
       this.chartData = {
         labels: [],
-        voltageData: [],
-        adcData: []
+        concentrationData: []
       }
     },
 
     updateChart(data, options = {}) {
       // 更新数据数组
       this.chartData.labels.push(data.counter)
-      this.chartData.voltageData.push(data.voltage)
-      this.chartData.adcData.push(data.adc)
+      this.chartData.concentrationData.push(data.alcohol_ppm ?? 0)
       
       // 限制数据点数量
       if (!options.skipTrim && this.chartData.labels.length > this.maxDataPoints) {
         this.chartData.labels.shift()
-        this.chartData.voltageData.shift()
-        this.chartData.adcData.shift()
+        this.chartData.concentrationData.shift()
       }
       
       // 绘制图表
-      this.drawChart()
+      if (!options.skipDraw) {
+        this.drawChart()
+      }
     },
     
     drawChart() {
@@ -297,15 +516,15 @@ export default {
       ctx.fillStyle = '#f8f9fa'
       ctx.fillRect(0, 0, width, height)
       
-      if (this.chartData.voltageData.length === 0) return
+      if (this.chartData.concentrationData.length === 0) return
       
       // 计算缩放比例
-      const maxVoltage = Math.max(...this.chartData.voltageData, 3.3)
-      const minVoltage = 0
-      const voltageRange = maxVoltage - minVoltage
+      const maxConcentration = Math.max(...this.chartData.concentrationData, 1)
+      const minConcentration = 0
+      const concentrationRange = Math.max(maxConcentration - minConcentration, 1)
       
       const xStep = (width - 2 * padding) / (this.maxDataPoints - 1)
-      const yScale = (height - 2 * padding) / voltageRange
+      const yScale = (height - 2 * padding) / concentrationRange
       
       // 绘制网格线
       ctx.strokeStyle = '#dee2e6'
@@ -320,18 +539,18 @@ export default {
         // 绘制Y轴刻度
         ctx.fillStyle = '#6c757d'
         ctx.font = '12px Arial'
-        const value = (maxVoltage - i * voltageRange / 4).toFixed(2)
-        ctx.fillText(value + 'V', 5, y + 4)
+        const value = (maxConcentration - i * concentrationRange / 4).toFixed(2)
+        ctx.fillText(value + ' ppm', 5, y + 4)
       }
       
-      // 绘制电压曲线
+      // 绘制浓度曲线
       ctx.strokeStyle = '#007bff'
       ctx.lineWidth = 2
       ctx.beginPath()
       
-      this.chartData.voltageData.forEach((voltage, index) => {
+      this.chartData.concentrationData.forEach((ppm, index) => {
         const x = padding + index * xStep
-        const y = height - padding - (voltage - minVoltage) * yScale
+        const y = height - padding - (ppm - minConcentration) * yScale
         
         if (index === 0) {
           ctx.moveTo(x, y)
@@ -344,9 +563,9 @@ export default {
       
       // 绘制数据点
       ctx.fillStyle = '#007bff'
-      this.chartData.voltageData.forEach((voltage, index) => {
+      this.chartData.concentrationData.forEach((ppm, index) => {
         const x = padding + index * xStep
-        const y = height - padding - (voltage - minVoltage) * yScale
+        const y = height - padding - (ppm - minConcentration) * yScale
         
         ctx.beginPath()
         ctx.arc(x, y, 3, 0, 2 * Math.PI)
@@ -529,6 +748,99 @@ export default {
   background: #fff;
 }
 
+.filter-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #e9ecef;
+  background: linear-gradient(135deg, #f8f9fb 0%, #f1f3f5 100%);
+}
+
+.quick-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.filter-label {
+  color: #6c757d;
+  font-weight: 600;
+}
+
+.chip {
+  border: 1px solid #d6d8e0;
+  background: white;
+  color: #4a4e69;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.chip:hover {
+  border-color: #764ba2;
+  color: #764ba2;
+}
+
+.chip.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-color: transparent;
+  box-shadow: 0 6px 12px rgba(118, 75, 162, 0.15);
+}
+
+.range-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.range-input {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #495057;
+  font-size: 0.9em;
+}
+
+.range-input input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #ced4da;
+  min-width: 230px;
+}
+
+.range-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.text-button {
+  background: none;
+  border: none;
+  color: #6c757d;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: 8px;
+  transition: color 0.2s, background 0.2s;
+}
+
+.text-button:hover {
+  color: #764ba2;
+  background: rgba(118, 75, 162, 0.1);
+}
+
+.text-button:disabled {
+  color: #adb5bd;
+  cursor: not-allowed;
+  background: transparent;
+}
+
 .refresh-button {
   border: none;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -629,6 +941,20 @@ export default {
   
   .card-value {
     font-size: 2.5em;
+  }
+
+  .range-filter {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .range-input input {
+    min-width: 100%;
+    width: 100%;
+  }
+
+  .range-actions {
+    justify-content: flex-start;
   }
 }
 </style>
