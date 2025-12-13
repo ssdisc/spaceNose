@@ -142,6 +142,52 @@ uint16_t ESP8266_GetBuffer(char* buffer, uint16_t buffer_size) {
     return len;
 }
 
+// ----------------- 状态查询 -----------------
+
+/**
+ * @brief 判断是否已经连接到热点
+ */
+uint8_t ESP8266_IsAPConnected(void) {
+    char resp[ESP8266_RX_BUFFER_SIZE] = {0};
+
+    ESP8266_ClearBuffer();
+    ESP8266_SendCommand("AT+CWJAP?\r\n");
+
+    /* 等待模块返回完整响应，再一次性读取缓冲区 */
+    HAL_Delay(300);
+    ESP8266_GetBuffer(resp, sizeof(resp));
+    printf("[CWJAP?] %s\r\n", resp);
+
+    if (strstr(resp, "No AP")) {
+        return 0;
+    }
+    if (strstr(resp, "CWJAP")) {
+        return 1;
+    }
+    return 0;
+}
+
+/**
+ * @brief 判断TCP是否已连接
+ */
+uint8_t ESP8266_IsTCPConnected(void) {
+    char resp[ESP8266_RX_BUFFER_SIZE] = {0};
+
+    ESP8266_ClearBuffer();
+    ESP8266_SendCommand("AT+CIPSTATUS\r\n");
+
+    /* 等待状态返回 */
+    HAL_Delay(300);
+    ESP8266_GetBuffer(resp, sizeof(resp));
+    printf("[CIPSTATUS] %s\r\n", resp);
+
+    /* STATUS:3 表示 TCP 已建立连接 */
+    if (strstr(resp, "STATUS:3")) {
+        return 1;
+    }
+    return 0;
+}
+
 // ----------------- TCP通信功能 -----------------
 
 /**

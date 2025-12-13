@@ -14,6 +14,12 @@
 #include "esp8266_driver.h"   // 引入新的ESP8266驱动
 #include "sensor_manager.h"   // 引入传感器管理模块
 
+/* WiFi/服务器配置 - 请根据实际环境修改 */
+static const char* WIFI_SSID = "MCVC05LC";       // 笔记本热点名称
+static const char* WIFI_PASSWORD = "N46065rj";   // 笔记本热点密码
+static const char* SERVER_IP = "192.168.137.1";  // 电脑热点的IP地址
+static const uint16_t SERVER_PORT = 8888;        // TCP服务器端口
+
 /* Private variables */
 UART_HandleTypeDef huart1;  // 调试串口
 UART_HandleTypeDef huart2;  // ESP8266串口
@@ -26,6 +32,8 @@ static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 void Error_Handler(void);
+static uint8_t EnsureWiFiConnected(const char* ssid, const char* password);
+static uint8_t EnsureTCPConnected(const char* ip, uint16_t port);
 
 /* 新的ESP8266相关函数 */
 uint8_t ESP8266_Test(void);
@@ -85,29 +93,26 @@ int main(void)
     printf("========================================\r\n\r\n");
 
     /* 测试ESP8266连接 */
-    uint8_t tcp_enabled = 0;  // TCP连接状态标志
+    uint8_t tcp_enabled = 0;       // TCP连接状态标志
+    uint8_t wifi_connected = 0;    // WiFi连接状态标志
+    uint32_t last_network_check = 0;
+    const uint32_t network_check_interval = 60000; // 轮询间隔(ms) 改为1分钟
     printf("正在测试ESP8266连接...\r\n");
     if (ESP8266_Test())
     {
         /* 连接WiFi热点 */
         printf("\r\n正在连接WiFi热点...\r\n");
         
-        // ⚠️ 请在这里修改为你的笔记本WiFi热点名称和密码
-        const char* wifi_ssid = "MCVC05LC";      // 修改为你的热点名称
-        const char* wifi_password = "N46065rj";     // 修改为你的热点密码
-        
-        if (ESP8266_ConnectWiFi(wifi_ssid, wifi_password))
+        if (ESP8266_ConnectWiFi(WIFI_SSID, WIFI_PASSWORD))
         {
             printf("\r\n✓ WiFi连接成功！\r\n");
+            wifi_connected = 1;
             ESP8266_GetIPAddress();
             
             /* 建立TCP连接到电脑服务器 */
             printf("\r\n正在建立TCP连接...\r\n");
-            // ⚠️ 请修改为你电脑的IP地址（打开WiFi热点后，电脑会自动获得一个IP，通常是192.168.137.1）
-            const char* server_ip = "192.168.137.1";  // 电脑WiFi热点的IP地址
-            uint16_t server_port = 8888;              // TCP服务器端口
             
-            if (ESP8266_StartConnection("TCP", server_ip, server_port))
+            if (ESP8266_StartConnection("TCP", SERVER_IP, SERVER_PORT))
             {
                 printf("\r\n✓ TCP连接建立成功！\r\n");
                 tcp_enabled = 1;
@@ -120,6 +125,7 @@ int main(void)
         else
         {
             printf("\r\n✗ WiFi连接失败，将继续运行但无网络功能\r\n");
+            wifi_connected = 0;
         }
     }
     
@@ -132,6 +138,22 @@ int main(void)
     /* 主循环 */
     while (1)
     {
+        /* 周期检查热点与服务器状态 */
+        uint32_t now = HAL_GetTick();
+        if (now - last_network_check > network_check_interval)
+        {
+            wifi_connected = EnsureWiFiConnected(WIFI_SSID, WIFI_PASSWORD);
+            if (wifi_connected)
+            {
+                tcp_enabled = EnsureTCPConnected(SERVER_IP, SERVER_PORT);
+            }
+            else
+            {
+                tcp_enabled = 0;
+            }
+            last_network_check = now;
+        }
+
         /* LED闪烁 */
         HAL_GPIO_TogglePin(GPIOF, GPIO_PIN_9);
         HAL_GPIO_TogglePin(GPIOF, GPIO_PIN_10);
@@ -189,12 +211,49 @@ int main(void)
             if (!ESP8266_SendTCP((uint8_t*)json_data, strlen(json_data)))
             {
                 printf("   [警告] TCP发送失败\r\n");
+                tcp_enabled = 0; // 触发下次循环重连
             }
         }
 
         /* 延时5秒，采集间隔调整为5s */
         HAL_Delay(5000);
     }
+}
+
+/**
+ * @brief  确保连接到热点，不在线则自动重连
+ */
+static uint8_t EnsureWiFiConnected(const char* ssid, const char* password)
+{
+    if (ESP8266_IsAPConnected()) {
+        return 1;
+    }
+
+    printf("\r\n[网络监听] 热点未连接，开始重连...\r\n");
+    if (ESP8266_ConnectWiFi(ssid, password)) {
+        printf("   ✓ 热点重连成功\r\n");
+        return 1;
+    }
+    printf("   ✗ 热点重连失败，本轮不再重试\r\n");
+    return 0;
+}
+
+/**
+ * @brief  确保TCP与服务器保持连接
+ */
+static uint8_t EnsureTCPConnected(const char* ip, uint16_t port)
+{
+    if (ESP8266_IsTCPConnected()) {
+        return 1;
+    }
+
+    printf("\r\n[网络监听] TCP未连接，开始重连...\r\n");
+    if (ESP8266_StartConnection("TCP", ip, port)) {
+        printf("   ✓ TCP重连成功\r\n");
+        return 1;
+    }
+    printf("   ✗ TCP重连失败，本轮不再重试\r\n");
+    return 0;
 }
 
 /**

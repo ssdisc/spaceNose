@@ -54,6 +54,18 @@ uint8_t ESP8266_SendAndWaitOK(const char* cmd, uint32_t timeout);
  */
 uint16_t ESP8266_GetBuffer(char* buffer, uint16_t buffer_size);
 
+/**
+ * @brief 检查是否已连接到热点
+ * @return 1: 已连接; 0: 未连接
+ */
+uint8_t ESP8266_IsAPConnected(void);
+
+/**
+ * @brief 检查TCP连接状态
+ * @return 1: TCP已连接; 0: 未连接
+ */
+uint8_t ESP8266_IsTCPConnected(void);
+
 
 /**
  * @brief UART接收回调函数，在 stm32f4xx_it.c 中被调用
