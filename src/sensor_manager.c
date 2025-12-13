@@ -26,7 +26,8 @@ SensorData_t g_sensor_data[SENSOR_TYPE_MAX] = {0};
 #define MQ3_ADC_CHANNEL         ADC_CHANNEL_5  // 使用PA5 (ADC1_CH5)
 
 /* 电压分压比（根据你的硬件电路调整） */
-#define VOLTAGE_DIVIDER_RATIO   2.5f    // 分压：5V → 2.0V (15kΩ + 10kΩ)
+// 方案：10kΩ（上臂，靠近AO） + 15kΩ（下臂，接地） ⇒ 5V → 3.0V，ADC安全
+#define VOLTAGE_DIVIDER_RATIO   (5.0f / 3.0f)    // ≈1.6667，分压后最大约3.0V
 #define ADC_VREF                3.3f    // STM32参考电压
 #define ADC_RESOLUTION          4096.0f // 12位ADC
 
