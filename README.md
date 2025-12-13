@@ -12,17 +12,17 @@
 本系统采用五层架构设计，确保了各层职责清晰，易于维护和扩展。
 
 ```
-[ 硬件传感器层 ] --- (UART) ---> [ 无线通信层 ] --- (WiFi/UDP) ---> [ 后端服务层 ] --- (WebSocket) ---> [ 前端展示层 ]
+[ 硬件传感器层 ] --- (UART) ---> [ 无线通信层 ] --- (WiFi/TCP) ---> [ 后端服务层 ] --- (WebSocket) ---> [ 前端展示层 ]
 |                |              |              |                |                  |                |
 |  STM32F407     |              |  ESP8266     |                |  FastAPI (Python)  |                |  Vue.js + Canvas
-|  (数据采集)     |              |  (数据转发)   |                |  (UDP/WebSocket)   |                |  (实时可视化)
+|  (数据采集)     |              |  (数据转发)   |                |  (TCP/WebSocket)   |                |  (实时可视化)
 ```
 
 1.  **硬件传感器层 (STM32)**: 使用 `STM32F407ZGT6` 微控制器采集模拟传感器数据，将其处理并封装成JSON格式。
 2.  **无线通信层 (ESP8266)**: STM32通过 `UART` 串口将JSON数据发送给 `ESP8266` WiFi模块。
-3.  **网络中继层 (电脑WiFi热点)**: ESP8266作为UDP客户端，连接到电脑创建的WiFi热点，并将数据包发送到指定IP和端口。
+3.  **网络中继层 (电脑WiFi热点)**: ESP8266作为TCP客户端，连接到电脑创建的WiFi热点，并将数据包发送到指定IP和端口。
 4.  **后端服务层 (FastAPI)**: 运行在电脑上的 `FastAPI` 服务器。
-    *   **UDP服务器** 监听指定端口，接收来自ESP8266的数据。
+    *   **TCP服务器** 监听指定端口，接收来自ESP8266的数据。
     *   **WebSocket服务器** 将处理后的数据（加入时间戳）实时广播给所有连接的前端客户端。
     *   **HTTP服务器** 提供前端Vue应用的静态文件访问。
 5.  **前端展示层 (Vue.js)**: 浏览器中的Web应用。
@@ -36,12 +36,12 @@
 ### 嵌入式端 (STM32)
 - **实时采集**: 每秒采集一次ADC数据并转换为电压值。
 - **数据封装**: 将数据打包成 `{"counter":N, "adc":X, "voltage":Y}` JSON格式。
-- **稳定通信**: 增强的ESP8266驱动，支持UDP连接、普通/透传模式数据发送，并包含完整的状态反馈和错误处理。
+- **稳定通信**: 增强的ESP8266驱动，支持TCP连接、普通/透传模式数据发送，并包含完整的状态反馈和错误处理。
 - **配置灵活**: WiFi热点、服务器IP和端口等关键参数可在代码中轻松配置。
 
 ### 后端服务器 (FastAPI)
-- **异步架构**: 基于 `asyncio` 实现异步非阻塞的UDP和WebSocket服务，性能卓越。
-- **多协议支持**: 同时处理UDP数据接收、WebSocket实时广播和HTTP静态服务。
+- **异步架构**: 基于 `asyncio` 实现异步非阻塞的TCP和WebSocket服务，性能卓越。
+- **多协议支持**: 同时处理TCP数据接收、WebSocket实时广播和HTTP静态服务。
 - **数据处理**: 接收数据后自动解析、验证并添加服务器时间戳。
 - **多客户端管理**: 支持多个前端客户端同时连接和接收数据广播。
 
@@ -58,7 +58,7 @@
 | 层次       | 技术/组件         | 描述                               |
 | :--------- | :---------------- | :--------------------------------- |
 | **嵌入式层** | `C`, `STM32 HAL`  | 使用PlatformIO进行开发的STM32固件     |
-| **通信层**   | `ESP8266`         | UART, UDP, WiFi, JSON              |
+| **通信层**   | `ESP8266`         | UART, TCP, WiFi, JSON              |
 | **后端层**   | `Python`, `FastAPI` | Uvicorn, asyncio, websockets       |
 | **数据库层** | `MySQL`, `SQLAlchemy` | 持久化存储传感器数据，支持历史查询  |
 | **前端层**   | `Vue.js 2`, `Canvas` | JavaScript (ES6+), CSS3            |
@@ -85,13 +85,29 @@
 
 ### 3️⃣ 配置MySQL数据库
 - 确保已安装MySQL数据库服务（[下载地址](https://dev.mysql.com/downloads/mysql/)）
-- 修改 `backend/.env` 文件中的数据库配置：
+- 创建/修改 `backend/.env`：
   ```env
   DB_HOST=localhost
   DB_PORT=3306
   DB_USER=root
   DB_PASSWORD=你的MySQL密码
   DB_NAME=spacenose
+
+  TCP_HOST=0.0.0.0
+  TCP_PORT=8888
+  SERVER_HOST=0.0.0.0
+  SERVER_PORT=8000
+  ```
+- 初始化数据库：
+  ```bash
+  cd backend
+  python init_database.py
+  ```
+  成功提示示例：
+  ```
+  ✓ 数据库 'spacenose' 创建成功或已存在
+  ✓ 数据库表创建成功
+  ✅ 数据库初始化完成！
   ```
 - 运行数据库初始化脚本：
   ```bash
@@ -130,7 +146,7 @@ spaceNose/
 │   ├── main.c                    # 主程序（采集+发送）
 │   └── esp8266_driver.c/h        # ESP8266驱动
 ├── backend/                      # 后端服务器
-│   ├── main.py                   # FastAPI服务器（UDP+WebSocket+API）
+│   ├── main.py                   # FastAPI服务器（TCP+WebSocket+API）
 │   ├── config.py                 # 配置文件管理
 │   ├── models.py                 # 数据库模型定义
 │   ├── database.py               # 数据库操作
