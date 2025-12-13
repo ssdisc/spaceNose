@@ -29,8 +29,6 @@
     *   通过 `WebSocket` 实时接收后端推送的数据。
     *   使用 `Canvas` 绘制实时数据曲线图，并以卡片和日志形式展示数据。
 
-详细图解请参考: [`系统架构图.txt`](系统架构图.txt)
-
 ## ✨ 核心功能
 
 ### 嵌入式端 (STM32)
@@ -51,8 +49,6 @@
 - **健壮的连接**: WebSocket客户端支持连接状态实时指示和断线自动重连。
 - **现代UI设计**: 采用响应式设计，适配不同屏幕，提供渐变背景、卡片动画等良好视觉效果。
 
-详细功能列表请参考: [`项目实现总结.md`](项目实现总结.md)
-
 ## 🛠️ 技术栈
 
 | 层次       | 技术/组件         | 描述                               |
@@ -61,7 +57,7 @@
 | **通信层**   | `ESP8266`         | UART, TCP, WiFi, JSON              |
 | **后端层**   | `Python`, `FastAPI` | Uvicorn, asyncio, websockets       |
 | **数据库层** | `MySQL`, `SQLAlchemy` | 持久化存储传感器数据，支持历史查询  |
-| **前端层**   | `Vue.js 2`, `Canvas` | JavaScript (ES6+), CSS3            |
+| **前端层**   | `Vue.js 3`, `Canvas` | JavaScript (ES6+), CSS3            |
 | **开发工具** | `PlatformIO`, `VSCode` | 跨平台嵌入式开发环境               |
 
 ## ⚡ 5分钟快速上手指南
@@ -98,22 +94,7 @@
   SERVER_HOST=0.0.0.0
   SERVER_PORT=8000
   ```
-- 初始化数据库：
-  ```bash
-  cd backend
-  python init_database.py
-  ```
-  成功提示示例：
-  ```
-  ✓ 数据库 'spacenose' 创建成功或已存在
-  ✓ 数据库表创建成功
-  ✅ 数据库初始化完成！
-  ```
-- 运行数据库初始化脚本：
-  ```bash
-  cd backend
-  python init_database.py
-  ```
+- 若数据库尚未创建，请在MySQL中执行 `CREATE DATABASE spacenose CHARACTER SET utf8mb4;`，应用启动时会自动建表（`sensor_data`）。
 
 ### 4️⃣ 修改STM32配置
 - 打开 `src/main.c` 文件。
@@ -126,9 +107,16 @@
   ```
 
 ### 5️⃣ 启动后端服务器
-- **双击运行根目录下的 `start_server.bat` 脚本**。
-- 脚本会自动安装Python依赖并启动FastAPI服务器；若检测到已安装Node.js，则会在 `web/` 下执行 `npm install`（仅首次或缺少依赖时）并自动运行 `npm run build` 更新静态资源。
-- 看到 `Uvicorn running on http://0.0.0.0:8000` 和 `数据库连接成功` 表示启动成功。
+- 打开终端：
+  ```bash
+  cd backend
+  python -m venv .venv
+  .\\.venv\\Scripts\\activate   # Windows
+  pip install -r requirements.txt
+  python main.py
+  ```
+- 若首次运行前端，请在另一个终端执行 `cd web && npm install && npm run build` 生成 `web/dist` 静态资源。
+- 首次启动会自动创建 `sensor_data` 表。日志出现 `Uvicorn running on http://0.0.0.0:8000` 和 `✓ 数据库表创建成功` 即表示后端正常工作。
 
 ### 6️⃣ 编译和上传固件
 - 在VSCode中，使用PlatformIO插件。
@@ -150,14 +138,11 @@ spaceNose/
 │   ├── config.py                 # 配置文件管理
 │   ├── models.py                 # 数据库模型定义
 │   ├── database.py               # 数据库操作
-│   ├── init_database.py          # 数据库初始化脚本
 │   ├── .env                      # 环境变量配置（需手动配置）
 │   └── requirements.txt          # Python依赖
 ├── web/                          # 前端Vue应用
 │   └── src/App.vue               # Vue主组件
-├── 系统架构图.txt                # 📐 详细系统架构图
-├── 项目实现总结.md               # 🎉 已完成功能和技术亮点
-├── start_server.bat              # 启动脚本
+├── docs/                         # 立项/策划等PDF文档
 └── README.md                     # 📍 你正在阅读的文件
 ```
 
@@ -196,7 +181,21 @@ curl http://localhost:8000/api/stats
 - 上电验证：分压中点/PA5 电压应 <3.0V（清洁空气常见 1.8–2.5V）；串口应输出 MQ-3 状态、ADC、电压、PPM。
 - 风险提示：裕量仅 ~0.3V，务必确保阻值与接法正确；如需更大裕量可改回 15k 上 + 10k 下（记得同步 `VOLTAGE_DIVIDER_RATIO` 为 2.5f）。
 
+## 🗄️ 数据库集成与运行时说明
+- **连接方式**：`DATABASE_URL=mysql+pymysql://<user>:<password>@<host>:<port>/<db>`，默认由 `.env` 中 `DB_*` 组合生成。
+- **表结构**：单表 `sensor_data`（自增 `id`、采样计数 `counter`、ADC/电压、MQ-3 衍生字段 `mq3_*`、`alcohol_ppm`、`sensor_status`、`timestamp`、`source_ip`），定义见 `backend/models.py`。
+- **自动建表**：运行 `backend/main.py` 时会调用 `init_db()`，在数据库存在的前提下自动创建缺失的表；无需额外迁移脚本。
+- **清理策略**：提供 `/api/data/cleanup?days=30` 以删除N天前数据，可结合系统计划任务定期调用。
+
+## 📚 系统架构概要（原“系统架构图.txt”精简版）
+- 数据流：STM32F407（采集/封装 JSON）→ UART → ESP8266 → WiFi/TCP → FastAPI (TCP + WebSocket + HTTP) → Vue 前端（WebSocket 实时显示）。
+- 关键链路：
+  - STM32 UART2：PA2→ESP8266 RX，PA3←ESP8266 TX，115200 波特率。
+  - ESP8266：Station 模式连接 PC 热点（2.4GHz），作为 TCP 客户端推送 JSON；服务器 IP 一般为 192.168.137.1。
+  - 后端：FastAPI 同时提供 TCP 监听、WebSocket `/ws`、REST API 与静态托管 `web/dist`。
+  - 前端：通过 WebSocket 实时接收，展示卡片/曲线/日志。
+- 端口约定：TCP 8888（可在 `.env` 配置 `TCP_HOST/TCP_PORT`），HTTP/WebSocket 8000。
+- 时间序（1Hz 采样）：采样→电压计算→JSON→UART→TCP→后端入库/广播→前端刷新。
+
 ## 📚 文档索引
-- **[系统架构图.txt](系统架构图.txt)**: 系统各层设计和数据流。
-- **[项目实现总结.md](项目实现总结.md)**: 已实现功能和技术亮点。
-- 其余 MQ-3 接线/安全说明已合并入本 README，避免重复。
+- 其余数据库/MQ-3/架构说明已合并入本 README；如需立项/策划材料请查看 `docs/` 目录下的PDF。
