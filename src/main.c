@@ -140,17 +140,25 @@ int main(void)
     {
         /* 周期检查热点与服务器状态 */
         uint32_t now = HAL_GetTick();
-        if (now - last_network_check > network_check_interval)
+        if (!wifi_connected || !tcp_enabled)
         {
-            wifi_connected = EnsureWiFiConnected(WIFI_SSID, WIFI_PASSWORD);
-            if (wifi_connected)
+            if (now - last_network_check > network_check_interval)
             {
-                tcp_enabled = EnsureTCPConnected(SERVER_IP, SERVER_PORT);
+                wifi_connected = EnsureWiFiConnected(WIFI_SSID, WIFI_PASSWORD);
+                if (wifi_connected)
+                {
+                    tcp_enabled = EnsureTCPConnected(SERVER_IP, SERVER_PORT);
+                }
+                else
+                {
+                    tcp_enabled = 0;
+                }
+                last_network_check = now;
             }
-            else
-            {
-                tcp_enabled = 0;
-            }
+        }
+        else
+        {
+            /* 已连通时刷新时间戳，避免累积突发检查 */
             last_network_check = now;
         }
 
