@@ -157,6 +157,70 @@
                 </el-button>
                 <div class="hint">用于演示星上异常检测触发高采样/下传关键片段的效果。</div>
               </el-collapse-item>
+
+              <el-collapse-item title="机器学习（场景识别）" name="ml">
+                <div class="hint">
+                  使用前端模拟数据（ch4/ph3/so2/h2s/co2/vocs）上传训练集并训练模型；硬件多气体接入后可直接复用。
+                </div>
+                <div class="ml-actions">
+                  <el-button size="small" :loading="mlLoading" @click="refreshMlStatus">刷新状态</el-button>
+                  <el-button
+                    size="small"
+                    type="primary"
+                    :disabled="mode !== 'simulation'"
+                    :loading="mlUploading"
+                    @click="uploadScenarioSample"
+                  >上传样本</el-button>
+                  <el-button size="small" type="warning" :loading="mlTraining" @click="trainScenarioModel">
+                    训练模型
+                  </el-button>
+                  <el-button size="small" type="success" :loading="mlPredicting" @click="predictScenario">
+                    预测当前
+                  </el-button>
+                </div>
+
+                <div v-if="mlError" class="ml-error">{{ mlError }}</div>
+
+                <div v-if="mlStatus" class="ml-grid">
+                  <div class="ml-kv">
+                    <span>ML 可用</span>
+                    <el-tag :type="mlStatus.ml_available ? 'success' : 'danger'" effect="plain" size="small">
+                      {{ mlStatus.ml_available ? 'Yes' : 'No' }}
+                    </el-tag>
+                  </div>
+                  <div class="ml-kv">
+                    <span>数据集条数</span>
+                    <span class="ml-value">{{ mlStatus.scenario.dataset_count }}</span>
+                  </div>
+                  <div class="ml-kv">
+                    <span>模型状态</span>
+                    <el-tag
+                      :type="mlStatus.scenario.model.enabled ? 'success' : 'info'"
+                      effect="plain"
+                      size="small"
+                    >{{ mlStatus.scenario.model.enabled ? '已训练' : '未训练' }}</el-tag>
+                  </div>
+                  <div class="ml-kv">
+                    <span>训练时间</span>
+                    <span class="ml-value">{{ mlStatus.scenario.model.trained_at || '—' }}</span>
+                  </div>
+                </div>
+
+                <div v-if="mlPrediction && mlPrediction.ok" class="ml-result">
+                  <el-tag type="success" effect="dark" size="small">预测</el-tag>
+                  <span class="ml-result-text">
+                    {{ mlPrediction.label }}（置信度 {{ (mlPrediction.confidence * 100).toFixed(1) }}%）
+                  </span>
+                </div>
+                <div v-else-if="mlPrediction && !mlPrediction.ok" class="ml-result">
+                  <el-tag type="info" effect="plain" size="small">预测失败</el-tag>
+                  <span class="ml-result-text">{{ mlPrediction.error }}</span>
+                </div>
+
+                <div class="hint" v-if="mode !== 'simulation'">
+                  当前处于“对接后端”模式，多气体特征不足；请先切回“模拟实验”上传训练样本。
+                </div>
+              </el-collapse-item>
             </el-collapse>
 
             <el-divider />
@@ -350,7 +414,15 @@ export default {
         multiplier: 3,
         durationSec: 10,
         remainingTicks: 0
-      }
+      },
+
+      mlStatus: null,
+      mlLoading: false,
+      mlUploading: false,
+      mlTraining: false,
+      mlPredicting: false,
+      mlPrediction: null,
+      mlError: ''
     }
   },
   computed: {
@@ -459,6 +531,7 @@ export default {
   mounted() {
     this.applyScenarioPreset()
     this.resetData()
+    this.refreshMlStatus()
   },
   beforeUnmount() {
     this.stopSimulation()
@@ -469,6 +542,7 @@ export default {
       this.stopSimulation()
       this.disconnectWs()
       this.resetData()
+      this.mlPrediction = null
     },
     formatNumber(value, unit) {
       const precision = unit === 'ppb' ? 0 : 3
@@ -675,6 +749,118 @@ export default {
       this.appendPoint(point)
       this.checkAlerts(point)
     },
+
+    apiBaseUrl() {
+      const protocol = window.location.protocol === 'https:' ? 'https' : 'http'
+      return `${protocol}://${window.location.hostname}:8000`
+    },
+
+    currentScenarioVector() {
+      const latest = this.points.length > 0 ? this.points[this.points.length - 1] : null
+      const vector = {}
+      GAS_META.forEach((gas) => {
+        const v = latest && latest[gas.key] !== undefined ? latest[gas.key] : this.baseline[gas.key]
+        vector[gas.key] = v == null ? null : Number(v)
+      })
+      return vector
+    },
+
+    async refreshMlStatus() {
+      this.mlError = ''
+      this.mlLoading = true
+      try {
+        const response = await fetch(`${this.apiBaseUrl()}/api/ml/status`)
+        const json = await response.json()
+        if (json.success && json.data) {
+          this.mlStatus = json.data
+        } else {
+          this.mlError = json.data?.error || '获取 ML 状态失败'
+        }
+      } catch (err) {
+        this.mlError = `获取 ML 状态失败：${String(err)}`
+      } finally {
+        this.mlLoading = false
+      }
+    },
+
+    async uploadScenarioSample() {
+      if (this.mode !== 'simulation') return
+      this.mlError = ''
+      this.mlUploading = true
+      try {
+        const payload = {
+          label: this.scenario,
+          features: this.currentScenarioVector(),
+          meta: {
+            temperature_c: this.temperatureC,
+            noise_percent: this.noisePercent,
+            drift_permille_per_min: this.driftPermillePerMin,
+            interference: this.enableInterference
+          },
+          source: 'ground_lab'
+        }
+        const response = await fetch(`${this.apiBaseUrl()}/api/ml/scenario/sample`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+        const json = await response.json()
+        if (json.success) {
+          this.addEvent('success', `已上传训练样本（${this.scenario}）`)
+          await this.refreshMlStatus()
+        } else {
+          this.mlError = json.data?.error || '上传训练样本失败'
+        }
+      } catch (err) {
+        this.mlError = `上传训练样本失败：${String(err)}`
+      } finally {
+        this.mlUploading = false
+      }
+    },
+
+    async trainScenarioModel() {
+      this.mlError = ''
+      this.mlTraining = true
+      try {
+        const response = await fetch(`${this.apiBaseUrl()}/api/ml/scenario/train?min_samples=20`, {
+          method: 'POST'
+        })
+        const json = await response.json()
+        if (json.success && json.data?.trained) {
+          this.addEvent('success', '场景模型训练完成')
+          await this.refreshMlStatus()
+        } else {
+          this.mlError = json.data?.error || '训练失败'
+        }
+      } catch (err) {
+        this.mlError = `训练失败：${String(err)}`
+      } finally {
+        this.mlTraining = false
+      }
+    },
+
+    async predictScenario() {
+      this.mlError = ''
+      this.mlPredicting = true
+      try {
+        const payload = { features: this.currentScenarioVector() }
+        const response = await fetch(`${this.apiBaseUrl()}/api/ml/scenario/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+        const json = await response.json()
+        this.mlPrediction = json.data || { ok: false, error: '预测失败' }
+        if (!json.success) {
+          this.mlError = this.mlPrediction.error || '预测失败'
+        }
+      } catch (err) {
+        this.mlPrediction = { ok: false, error: String(err) }
+        this.mlError = `预测失败：${String(err)}`
+      } finally {
+        this.mlPredicting = false
+      }
+    },
     exportXlsx() {
       const rows = this.points.map((p) => {
         const row = { time: p.tLabel }
@@ -749,7 +935,7 @@ export default {
 .lab {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .lab-head {
@@ -763,22 +949,26 @@ export default {
 .eyebrow {
   margin: 0;
   font-size: 11px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.15em;
   text-transform: uppercase;
-  color: #6b7280;
+  color: #22d3ee;
+  text-shadow: 0 0 15px rgba(34, 211, 238, 0.5);
 }
 
 .title h2 {
   margin: 4px 0;
   font-size: 22px;
   font-weight: 800;
-  color: #0f172a;
-  letter-spacing: -0.2px;
+  background: linear-gradient(135deg, #e2e8f0 0%, #22d3ee 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: 0.5px;
 }
 
 .lead {
   margin: 0;
-  color: #4b5563;
+  color: #94a3b8;
   line-height: 1.6;
   max-width: 680px;
 }
@@ -791,18 +981,99 @@ export default {
   flex-wrap: wrap;
 }
 
+/* 太空玻璃态卡片 */
 .glass {
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.8) !important;
+  border: 1px solid rgba(71, 85, 105, 0.4) !important;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.glass:hover {
+  border-color: rgba(34, 211, 238, 0.3) !important;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3), 0 0 20px rgba(34, 211, 238, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .panel-title {
   font-weight: 800;
-  color: #111827;
+  color: #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-title::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  background: linear-gradient(180deg, #22d3ee, #a855f7);
+  border-radius: 2px;
 }
 
 .form :deep(.el-form-item) {
   margin-bottom: 12px;
+}
+
+.form :deep(.el-form-item__label) {
+  color: #94a3b8 !important;
+}
+
+.form :deep(.el-input__wrapper),
+.form :deep(.el-select__wrapper) {
+  background: rgba(30, 41, 59, 0.8) !important;
+  border-color: rgba(71, 85, 105, 0.5) !important;
+  box-shadow: none !important;
+}
+
+.form :deep(.el-input__inner),
+.form :deep(.el-select__inner) {
+  color: #e2e8f0 !important;
+}
+
+.form :deep(.el-slider__runway) {
+  background: rgba(71, 85, 105, 0.5);
+}
+
+.form :deep(.el-slider__bar) {
+  background: linear-gradient(90deg, #22d3ee, #a855f7);
+}
+
+.form :deep(.el-slider__button) {
+  border-color: #22d3ee;
+  background: #0f172a;
+}
+
+.form :deep(.el-radio-button__inner) {
+  background: rgba(30, 41, 59, 0.8) !important;
+  border-color: rgba(71, 85, 105, 0.5) !important;
+  color: #94a3b8 !important;
+}
+
+.form :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.3), rgba(168, 85, 247, 0.3)) !important;
+  border-color: rgba(34, 211, 238, 0.6) !important;
+  color: #22d3ee !important;
+  box-shadow: 0 0 15px rgba(34, 211, 238, 0.3);
+}
+
+.form :deep(.el-switch.is-checked .el-switch__core) {
+  background: linear-gradient(90deg, #22d3ee, #a855f7);
+  border-color: transparent;
+}
+
+.form :deep(.el-collapse-item__header) {
+  background: transparent !important;
+  color: #94a3b8 !important;
+  border-color: rgba(71, 85, 105, 0.3) !important;
+}
+
+.form :deep(.el-collapse-item__content) {
+  color: #e2e8f0;
+}
+
+.form :deep(.el-divider) {
+  border-color: rgba(71, 85, 105, 0.3);
 }
 
 .btn-row {
@@ -826,16 +1097,91 @@ export default {
 
 .hint {
   margin-top: 8px;
-  color: #475569;
-  background: #f8fafc;
-  border: 1px dashed #e2e8f0;
-  padding: 8px 10px;
+  color: #94a3b8;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px dashed rgba(71, 85, 105, 0.5);
+  padding: 10px 12px;
   border-radius: 10px;
   line-height: 1.5;
+  font-size: 12px;
 }
 
+.ml-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 6px;
+}
+
+.ml-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+  margin-top: 10px;
+}
+
+.ml-kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(71, 85, 105, 0.4);
+  background: rgba(30, 41, 59, 0.6);
+  border-radius: 10px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.ml-value {
+  color: #22d3ee;
+  font-weight: 700;
+}
+
+.ml-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.ml-result-text {
+  color: #22c55e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ml-error {
+  margin-top: 10px;
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 10px 12px;
+  border-radius: 10px;
+  line-height: 1.5;
+  font-size: 12px;
+}
+
+/* 气体卡片 - 太空风格 */
 .gas-card {
-  min-height: 120px;
+  min-height: 130px;
+  position: relative;
+  overflow: hidden;
+}
+
+.gas-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--gas-color, #22d3ee), transparent);
+  opacity: 0.6;
 }
 
 .gas-top {
@@ -847,34 +1193,59 @@ export default {
 
 .gas-label {
   font-weight: 800;
-  color: #0f172a;
+  color: #e2e8f0;
+  font-size: 14px;
 }
 
 .gas-unit {
-  font-size: 12px;
+  font-size: 11px;
   color: #64748b;
   margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
 }
 
 .gas-value {
-  margin-top: 10px;
-  font-size: 28px;
+  margin-top: 12px;
+  font-size: 32px;
   font-weight: 900;
-  letter-spacing: -0.3px;
-  color: #111827;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, #e2e8f0 0%, #22d3ee 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: none;
+  filter: drop-shadow(0 0 20px rgba(34, 211, 238, 0.3));
 }
 
 .gas-sub {
-  margin-top: 8px;
+  margin-top: 10px;
   display: flex;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
   color: #64748b;
-  font-size: 12px;
+  font-size: 11px;
+}
+
+.gas-sub span {
+  padding: 3px 8px;
+  background: rgba(30, 41, 59, 0.6);
+  border-radius: 6px;
+  border: 1px solid rgba(71, 85, 105, 0.3);
 }
 
 .section {
-  margin-top: 10px;
+  margin-top: 12px;
+}
+
+/* 图表卡片 */
+.chart-card {
+  position: relative;
+}
+
+.chart-card :deep(.el-card__header) {
+  border-color: rgba(71, 85, 105, 0.3) !important;
+  color: #e2e8f0;
 }
 
 .chart {
@@ -886,6 +1257,7 @@ export default {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+  color: #e2e8f0;
 }
 
 .small-meta {
@@ -896,37 +1268,65 @@ export default {
   font-size: 12px;
 }
 
+/* 指标区域 */
 .metric {
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .metric-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
-  color: #111827;
+  margin-bottom: 8px;
+  color: #e2e8f0;
 }
 
 .metric-label {
   font-weight: 700;
-  color: #0f172a;
+  color: #e2e8f0;
+  font-size: 13px;
 }
 
 .metric-value {
-  color: #475569;
+  color: #22d3ee;
   font-size: 12px;
+  font-weight: 600;
 }
 
+.metric :deep(.el-progress__text) {
+  color: #94a3b8 !important;
+}
+
+.metric :deep(.el-progress-bar__outer) {
+  background: rgba(71, 85, 105, 0.4) !important;
+}
+
+/* 事件日志 */
 .mini-log {
-  margin-top: 10px;
-  border-top: 1px solid #e2e8f0;
-  padding-top: 10px;
+  margin-top: 12px;
+  border-top: 1px solid rgba(71, 85, 105, 0.3);
+  padding-top: 12px;
 }
 
 .mini-log-list {
   display: grid;
   gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.mini-log-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.mini-log-list::-webkit-scrollbar-track {
+  background: rgba(30, 41, 59, 0.5);
+  border-radius: 2px;
+}
+
+.mini-log-list::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.8);
+  border-radius: 2px;
 }
 
 .mini-log-item {
@@ -934,17 +1334,106 @@ export default {
   grid-template-columns: auto 1fr;
   gap: 8px;
   align-items: start;
+  padding: 6px 8px;
+  background: rgba(30, 41, 59, 0.4);
+  border-radius: 6px;
+  border-left: 2px solid transparent;
+}
+
+.mini-log-item:has(.el-tag--danger) {
+  border-left-color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.mini-log-item:has(.el-tag--warning) {
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.mini-log-item:has(.el-tag--success) {
+  border-left-color: #22c55e;
+  background: rgba(34, 197, 94, 0.1);
 }
 
 .mini-log-text {
-  color: #334155;
+  color: #94a3b8;
   line-height: 1.4;
   font-size: 12px;
 }
 
 .empty {
-  color: #94a3b8;
+  color: #64748b;
   font-size: 12px;
+  text-align: center;
+  padding: 16px;
+}
+
+/* Element Plus 暗色主题覆盖 */
+:deep(.el-card) {
+  --el-card-bg-color: transparent;
+}
+
+:deep(.el-card__header) {
+  background: transparent !important;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.3) !important;
+  padding: 14px 16px !important;
+}
+
+:deep(.el-card__body) {
+  padding: 16px !important;
+}
+
+:deep(.el-tag) {
+  border: none !important;
+}
+
+:deep(.el-tag--success) {
+  background: rgba(34, 197, 94, 0.2) !important;
+  color: #22c55e !important;
+}
+
+:deep(.el-tag--warning) {
+  background: rgba(245, 158, 11, 0.2) !important;
+  color: #f59e0b !important;
+}
+
+:deep(.el-tag--danger) {
+  background: rgba(239, 68, 68, 0.2) !important;
+  color: #ef4444 !important;
+}
+
+:deep(.el-tag--info) {
+  background: rgba(100, 116, 139, 0.2) !important;
+  color: #94a3b8 !important;
+}
+
+:deep(.el-button--primary) {
+  background: linear-gradient(135deg, #0891b2, #7c3aed) !important;
+  border: none !important;
+  box-shadow: 0 4px 15px rgba(8, 145, 178, 0.3);
+}
+
+:deep(.el-button--primary:hover) {
+  background: linear-gradient(135deg, #0ea5e9, #8b5cf6) !important;
+  box-shadow: 0 4px 20px rgba(8, 145, 178, 0.5);
+}
+
+:deep(.el-button--success) {
+  background: rgba(34, 197, 94, 0.2) !important;
+  border: 1px solid rgba(34, 197, 94, 0.4) !important;
+  color: #22c55e !important;
+}
+
+:deep(.el-button--warning) {
+  background: rgba(245, 158, 11, 0.2) !important;
+  border: 1px solid rgba(245, 158, 11, 0.4) !important;
+  color: #f59e0b !important;
+}
+
+:deep(.el-button--danger) {
+  background: rgba(239, 68, 68, 0.2) !important;
+  border: 1px solid rgba(239, 68, 68, 0.4) !important;
+  color: #ef4444 !important;
 }
 
 @media (max-width: 900px) {

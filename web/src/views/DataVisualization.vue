@@ -11,6 +11,10 @@
       <div class="head-actions">
         <el-tag :type="connectionTagType" effect="dark">{{ connectionTagText }}</el-tag>
         <el-tag :type="sensorTagType" effect="plain">传感器：{{ sensorStatusText }}</el-tag>
+        <el-tag :type="mlAnomalyTagType" effect="plain">ML异常：{{ mlAnomalyTagText }}</el-tag>
+        <el-button type="warning" plain :loading="mlAnomalyTraining" @click="trainAnomalyModel">
+          训练异常模型
+        </el-button>
         <el-button type="primary" :disabled="isConnected || wsConnecting" @click="connectWebSocket">
           {{ wsConnecting ? '连接中…' : '连接' }}
         </el-button>
@@ -127,6 +131,10 @@
                 <div class="kv-item">
                   <span class="kv-key">co2_ppm</span>
                   <span class="kv-value">{{ sensorData.co2_ppm == null ? '—' : `${formatNumber(sensorData.co2_ppm, 1)} ppm` }}</span>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-key">ml.anomaly</span>
+                  <span class="kv-value">{{ mlAnomalyDetailText }}</span>
                 </div>
               </div>
               <div class="hint">
@@ -284,7 +292,8 @@ export default {
         alcohol_ppm: 0,
         co2_ppm: null,
         sensor_status: 3,
-        timestamp: ''
+        timestamp: '',
+        ml: null
       },
 
       dataLogs: [],
@@ -297,7 +306,10 @@ export default {
         range: [],
         preset: 'hour',
         isActive: false
-      }
+      },
+
+      mlAnomalyTraining: false,
+      mlAnomalyTrainResult: null
     }
   },
   computed: {
@@ -351,37 +363,65 @@ export default {
       if (Number.isNaN(ppm)) return '—'
       return ppm.toFixed(1)
     },
+    mlAnomalyTagText() {
+      const anomaly = this.sensorData.ml?.anomaly
+      if (!anomaly) return '未计算'
+      if (!anomaly.ok) return anomaly.error || '未训练'
+      return anomaly.label === 'anomaly' ? '异常' : '正常'
+    },
+    mlAnomalyTagType() {
+      const anomaly = this.sensorData.ml?.anomaly
+      if (!anomaly) return 'info'
+      if (!anomaly.ok) return 'info'
+      return anomaly.label === 'anomaly' ? 'danger' : 'success'
+    },
+    mlAnomalyDetailText() {
+      const anomaly = this.sensorData.ml?.anomaly
+      if (!anomaly) return '—'
+      if (!anomaly.ok) return anomaly.error || '—'
+      const score = typeof anomaly.score === 'number' ? anomaly.score.toFixed(4) : String(anomaly.score)
+      return `${anomaly.label} (score=${score})`
+    },
     chartOption() {
       const labels = this.chartPoints.map((p) => p.label)
       const alcoholValues = this.chartPoints.map((p) => p.alcohol)
       const co2Values = this.chartPoints.map((p) => p.co2)
       return {
-        tooltip: { trigger: 'axis' },
+        backgroundColor: 'transparent',
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: 'rgba(15, 23, 42, 0.9)',
+          borderColor: 'rgba(34, 211, 238, 0.3)',
+          textStyle: { color: '#e2e8f0' }
+        },
         legend: {
           top: 0,
           data: ['alcohol_ppm', 'co2_ppm'],
-          textStyle: { color: '#475569', fontSize: 12 }
+          textStyle: { color: '#94a3b8', fontSize: 12 }
         },
         grid: { left: 44, right: 44, top: 34, bottom: 34 },
         xAxis: {
           type: 'category',
           data: labels,
           axisLabel: { color: '#64748b' },
-          axisLine: { lineStyle: { color: '#cbd5e1' } }
+          axisLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } },
+          axisTick: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } }
         },
         yAxis: [
           {
             type: 'value',
             name: '酒精 ppm',
-            nameTextStyle: { color: '#64748b' },
+            nameTextStyle: { color: '#94a3b8' },
             axisLabel: { color: '#64748b' },
-            splitLine: { lineStyle: { color: '#e2e8f0' } }
+            axisLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } },
+            splitLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.2)' } }
           },
           {
             type: 'value',
             name: 'CO₂ ppm',
-            nameTextStyle: { color: '#64748b' },
+            nameTextStyle: { color: '#94a3b8' },
             axisLabel: { color: '#64748b' },
+            axisLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } },
             splitLine: { show: false }
           }
         ],
@@ -392,8 +432,26 @@ export default {
             smooth: true,
             showSymbol: false,
             connectNulls: true,
-            lineStyle: { color: '#4f46e5', width: 2 },
-            itemStyle: { color: '#4f46e5' },
+            lineStyle: {
+              color: '#a855f7',
+              width: 2,
+              shadowColor: 'rgba(168, 85, 247, 0.5)',
+              shadowBlur: 10
+            },
+            itemStyle: { color: '#a855f7' },
+            areaStyle: {
+              color: {
+                type: 'linear',
+                x: 0,
+                y: 0,
+                x2: 0,
+                y2: 1,
+                colorStops: [
+                  { offset: 0, color: 'rgba(168, 85, 247, 0.3)' },
+                  { offset: 1, color: 'rgba(168, 85, 247, 0)' }
+                ]
+              }
+            },
             data: alcoholValues
           },
           {
@@ -403,8 +461,26 @@ export default {
             smooth: true,
             showSymbol: false,
             connectNulls: true,
-            lineStyle: { color: '#0ea5e9', width: 2 },
-            itemStyle: { color: '#0ea5e9' },
+            lineStyle: {
+              color: '#22d3ee',
+              width: 2,
+              shadowColor: 'rgba(34, 211, 238, 0.5)',
+              shadowBlur: 10
+            },
+            itemStyle: { color: '#22d3ee' },
+            areaStyle: {
+              color: {
+                type: 'linear',
+                x: 0,
+                y: 0,
+                x2: 0,
+                y2: 1,
+                colorStops: [
+                  { offset: 0, color: 'rgba(34, 211, 238, 0.3)' },
+                  { offset: 1, color: 'rgba(34, 211, 238, 0)' }
+                ]
+              }
+            },
             data: co2Values
           }
         ]
@@ -594,7 +670,8 @@ export default {
             alcohol_ppm: item.alcohol_ppm ?? 0,
             co2_ppm: item.co2_ppm ?? null,
             sensor_status: item.sensor_status ?? 3,
-            timestamp: item.timestamp ?? ''
+            timestamp: item.timestamp ?? '',
+            ml: null
           }))
           this.timeFilter.isActive = false
           this.timeFilter.preset = 'hour'
@@ -619,7 +696,8 @@ export default {
             alcohol_ppm: item.alcohol_ppm ?? 0,
             co2_ppm: item.co2_ppm ?? null,
             sensor_status: item.sensor_status ?? 3,
-            timestamp: item.timestamp ?? ''
+            timestamp: item.timestamp ?? '',
+            ml: null
           }))
           this.timeFilter.isActive = true
           this.applyHistoryData(normalized)
@@ -668,7 +746,8 @@ export default {
             alcohol_ppm: data.alcohol_ppm ?? 0,
             co2_ppm: data.co2_ppm ?? null,
             sensor_status: data.sensor_status !== undefined ? data.sensor_status : 3,
-            timestamp: data.timestamp ?? ''
+            timestamp: data.timestamp ?? '',
+            ml: data.ml ?? null
           }
 
           this.sensorData = normalized
@@ -714,6 +793,21 @@ export default {
       this.ws = null
       this.wsConnecting = false
       this.isConnected = false
+    },
+
+    async trainAnomalyModel() {
+      this.mlAnomalyTraining = true
+      try {
+        const response = await fetch(`${this.apiBaseUrl()}/api/ml/anomaly/train?limit=2000&min_samples=50`, {
+          method: 'POST'
+        })
+        const json = await response.json()
+        this.mlAnomalyTrainResult = json.data || null
+      } catch (error) {
+        this.mlAnomalyTrainResult = { trained: false, error: String(error) }
+      } finally {
+        this.mlAnomalyTraining = false
+      }
     }
   }
 }
@@ -737,22 +831,26 @@ export default {
 .eyebrow {
   margin: 0;
   font-size: 11px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: #6b7280;
+  color: #22d3ee;
+  text-shadow: 0 0 15px rgba(34, 211, 238, 0.5);
 }
 
 .title h2 {
   margin: 4px 0;
   font-size: 22px;
   font-weight: 800;
-  color: #0f172a;
   letter-spacing: -0.2px;
+  background: linear-gradient(135deg, #22d3ee 0%, #a855f7 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .lead {
   margin: 0;
-  color: #4b5563;
+  color: #94a3b8;
   line-height: 1.6;
   max-width: 720px;
 }
@@ -765,9 +863,17 @@ export default {
   flex-wrap: wrap;
 }
 
+/* Dark Glass Cards */
 .glass {
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.8) !important;
+  border: 1px solid rgba(71, 85, 105, 0.4) !important;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.glass:hover {
+  border-color: rgba(34, 211, 238, 0.3) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(34, 211, 238, 0.1);
 }
 
 .metric-card {
@@ -783,7 +889,7 @@ export default {
 
 .metric-label {
   font-weight: 800;
-  color: #0f172a;
+  color: #e2e8f0;
 }
 
 .metric-unit {
@@ -797,7 +903,11 @@ export default {
   font-size: 28px;
   font-weight: 900;
   letter-spacing: -0.3px;
-  color: #111827;
+  background: linear-gradient(135deg, #e2e8f0 0%, #22d3ee 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.3));
 }
 
 .section {
@@ -821,6 +931,7 @@ export default {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+  color: #e2e8f0;
 }
 
 .small-meta {
@@ -833,7 +944,7 @@ export default {
 
 .panel-title {
   font-weight: 800;
-  color: #111827;
+  color: #e2e8f0;
 }
 
 .form :deep(.el-form-item) {
@@ -856,10 +967,16 @@ export default {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(71, 85, 105, 0.3);
   border-radius: 10px;
   padding: 10px;
+  transition: all 0.3s ease;
+}
+
+.kv-item:hover {
+  border-color: rgba(34, 211, 238, 0.3);
+  background: rgba(30, 41, 59, 0.8);
 }
 
 .kv-key {
@@ -868,7 +985,7 @@ export default {
 }
 
 .kv-value {
-  color: #0f172a;
+  color: #22d3ee;
   font-weight: 700;
   font-size: 12px;
   text-align: right;
@@ -877,9 +994,9 @@ export default {
 
 .hint {
   margin-top: 12px;
-  color: #475569;
-  background: #f8fafc;
-  border: 1px dashed #e2e8f0;
+  color: #94a3b8;
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px dashed rgba(71, 85, 105, 0.5);
   padding: 10px;
   border-radius: 10px;
   line-height: 1.5;
@@ -893,8 +1010,237 @@ export default {
 
 .empty {
   padding: 24px 0;
-  color: #94a3b8;
+  color: #64748b;
   text-align: center;
+}
+
+/* Element Plus Dark Overrides */
+.glass :deep(.el-card__header) {
+  background: rgba(30, 41, 59, 0.5);
+  border-bottom: 1px solid rgba(71, 85, 105, 0.3);
+  color: #e2e8f0;
+}
+
+/* Tabs */
+.tabs :deep(.el-tabs__header) {
+  margin-bottom: 16px;
+}
+
+.tabs :deep(.el-tabs__nav-wrap::after) {
+  background-color: rgba(71, 85, 105, 0.3);
+}
+
+.tabs :deep(.el-tabs__item) {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.tabs :deep(.el-tabs__item:hover) {
+  color: #94a3b8;
+}
+
+.tabs :deep(.el-tabs__item.is-active) {
+  color: #22d3ee;
+  text-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
+}
+
+.tabs :deep(.el-tabs__active-bar) {
+  background: linear-gradient(90deg, #22d3ee, #a855f7);
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
+}
+
+/* Tags */
+:deep(.el-tag) {
+  border-radius: 6px;
+}
+
+:deep(.el-tag--success) {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #22c55e;
+}
+
+:deep(.el-tag--warning) {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+}
+
+:deep(.el-tag--danger) {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+:deep(.el-tag--info) {
+  background: rgba(100, 116, 139, 0.15);
+  border-color: rgba(100, 116, 139, 0.3);
+  color: #94a3b8;
+}
+
+/* Buttons */
+:deep(.el-button--primary) {
+  background: linear-gradient(135deg, #0891b2, #22d3ee) !important;
+  border: none !important;
+  box-shadow: 0 4px 15px rgba(34, 211, 238, 0.3);
+}
+
+:deep(.el-button--primary:hover) {
+  background: linear-gradient(135deg, #22d3ee, #67e8f9) !important;
+  box-shadow: 0 4px 20px rgba(34, 211, 238, 0.5);
+}
+
+:deep(.el-button--warning) {
+  background: linear-gradient(135deg, #d97706, #f59e0b) !important;
+  border: none !important;
+  box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);
+}
+
+:deep(.el-button--warning.is-plain) {
+  background: rgba(245, 158, 11, 0.1) !important;
+  border: 1px solid rgba(245, 158, 11, 0.5) !important;
+  color: #f59e0b !important;
+}
+
+:deep(.el-button--default) {
+  background: rgba(51, 65, 85, 0.6) !important;
+  border: 1px solid rgba(71, 85, 105, 0.5) !important;
+  color: #94a3b8 !important;
+}
+
+:deep(.el-button--default:hover) {
+  background: rgba(71, 85, 105, 0.6) !important;
+  border-color: rgba(34, 211, 238, 0.5) !important;
+  color: #e2e8f0 !important;
+}
+
+:deep(.el-button.is-text) {
+  color: #22d3ee !important;
+}
+
+:deep(.el-button.is-text:hover) {
+  color: #67e8f9 !important;
+  background: rgba(34, 211, 238, 0.1) !important;
+}
+
+:deep(.el-button.is-disabled) {
+  opacity: 0.5;
+}
+
+/* Form Elements */
+:deep(.el-form-item__label) {
+  color: #94a3b8 !important;
+}
+
+:deep(.el-select) {
+  --el-fill-color-blank: rgba(30, 41, 59, 0.8);
+}
+
+:deep(.el-input__wrapper) {
+  background: rgba(30, 41, 59, 0.8) !important;
+  border: 1px solid rgba(71, 85, 105, 0.5) !important;
+  box-shadow: none !important;
+}
+
+:deep(.el-input__wrapper:hover) {
+  border-color: rgba(34, 211, 238, 0.5) !important;
+}
+
+:deep(.el-input__wrapper.is-focus) {
+  border-color: #22d3ee !important;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.2) !important;
+}
+
+:deep(.el-input__inner) {
+  color: #e2e8f0 !important;
+}
+
+:deep(.el-input__inner::placeholder) {
+  color: #64748b !important;
+}
+
+:deep(.el-radio-button__inner) {
+  background: rgba(30, 41, 59, 0.8) !important;
+  border-color: rgba(71, 85, 105, 0.5) !important;
+  color: #94a3b8 !important;
+}
+
+:deep(.el-radio-button__inner:hover) {
+  color: #e2e8f0 !important;
+}
+
+:deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.2), rgba(168, 85, 247, 0.2)) !important;
+  border-color: rgba(34, 211, 238, 0.5) !important;
+  color: #22d3ee !important;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.3) !important;
+}
+
+/* Date Picker */
+:deep(.el-date-editor) {
+  --el-fill-color-blank: rgba(30, 41, 59, 0.8);
+}
+
+:deep(.el-range-input) {
+  background: transparent !important;
+  color: #e2e8f0 !important;
+}
+
+:deep(.el-range-separator) {
+  color: #64748b !important;
+}
+
+/* Table */
+:deep(.el-table) {
+  background: transparent !important;
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: rgba(30, 41, 59, 0.6);
+  --el-table-row-hover-bg-color: rgba(34, 211, 238, 0.05);
+  --el-table-border-color: rgba(71, 85, 105, 0.3);
+  --el-table-text-color: #e2e8f0;
+  --el-table-header-text-color: #94a3b8;
+}
+
+:deep(.el-table__inner-wrapper::before) {
+  background-color: rgba(71, 85, 105, 0.3);
+}
+
+:deep(.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell) {
+  background: rgba(30, 41, 59, 0.3);
+}
+
+:deep(.el-table th.el-table__cell) {
+  background: rgba(30, 41, 59, 0.6) !important;
+  font-weight: 600;
+}
+
+:deep(.el-table__empty-text) {
+  color: #64748b;
+}
+
+/* Select Dropdown (needs global style for popper) */
+:deep(.el-select__wrapper) {
+  background: rgba(30, 41, 59, 0.8) !important;
+  border: 1px solid rgba(71, 85, 105, 0.5) !important;
+  box-shadow: none !important;
+}
+
+:deep(.el-select__wrapper:hover) {
+  border-color: rgba(34, 211, 238, 0.5) !important;
+}
+
+:deep(.el-select__wrapper.is-focused) {
+  border-color: #22d3ee !important;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.2) !important;
+}
+
+:deep(.el-select__selected-item) {
+  color: #e2e8f0 !important;
+}
+
+:deep(.el-select__placeholder) {
+  color: #64748b !important;
 }
 
 @media (max-width: 900px) {
