@@ -214,11 +214,12 @@
                 <div class="card-header-row">
                   <div>历史记录</div>
                   <div class="small-meta">
+                    <span>共 {{ totalLogs }} 条</span>
                     <el-button text @click="fetchRecentData">拉取最近</el-button>
                   </div>
                 </div>
               </template>
-              <el-table :data="dataLogs" stripe height="440">
+              <el-table :data="paginatedLogs" stripe height="400">
                 <el-table-column prop="timestamp" label="时间" width="180" />
                 <el-table-column prop="counter" label="计数" width="90" />
                 <el-table-column prop="adc" label="ADC" width="90" />
@@ -253,6 +254,18 @@
                   <div class="empty">暂无历史数据</div>
                 </template>
               </el-table>
+              <div class="pagination-wrap">
+                <el-pagination
+                  v-model:current-page="pagination.currentPage"
+                  v-model:page-size="pagination.pageSize"
+                  :page-sizes="pagination.pageSizes"
+                  :total="totalLogs"
+                  layout="total, sizes, prev, pager, next, jumper"
+                  background
+                  @size-change="onPageSizeChange"
+                  @current-change="onPageChange"
+                />
+              </div>
             </el-card>
           </el-col>
         </el-row>
@@ -300,7 +313,15 @@ export default {
       historyLimit: 50,
 
       chartPoints: [],
-      maxDataPoints: 120,
+      maxDataPoints: 120,           // 实时模式最大点数
+      maxChartPointsHistory: 0,     // 历史模式：0表示不限制，显示全部
+
+      // 表格分页
+      pagination: {
+        currentPage: 1,
+        pageSize: 50,
+        pageSizes: [20, 50, 100, 200]
+      },
 
       timeFilter: {
         range: [],
@@ -382,12 +403,25 @@ export default {
       const score = typeof anomaly.score === 'number' ? anomaly.score.toFixed(4) : String(anomaly.score)
       return `${anomaly.label} (score=${score})`
     },
+    // 分页后的表格数据
+    paginatedLogs() {
+      const start = (this.pagination.currentPage - 1) * this.pagination.pageSize
+      const end = start + this.pagination.pageSize
+      return this.dataLogs.slice(start, end)
+    },
+    totalLogs() {
+      return this.dataLogs.length
+    },
     chartOption() {
       const labels = this.chartPoints.map((p) => p.label)
       const alcoholValues = this.chartPoints.map((p) => p.alcohol)
       const co2Values = this.chartPoints.map((p) => p.co2)
+      const isLargeData = this.chartPoints.length > 500
+
       return {
         backgroundColor: 'transparent',
+        // 大数据优化：关闭动画
+        animation: !isLargeData,
         tooltip: {
           trigger: 'axis',
           backgroundColor: 'rgba(15, 23, 42, 0.9)',
@@ -403,7 +437,11 @@ export default {
         xAxis: {
           type: 'category',
           data: labels,
-          axisLabel: { color: '#64748b' },
+          axisLabel: {
+            color: '#64748b',
+            // 大数据时减少标签数量
+            interval: isLargeData ? Math.floor(labels.length / 10) : 'auto'
+          },
           axisLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } },
           axisTick: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } }
         },
@@ -429,17 +467,22 @@ export default {
           {
             name: 'alcohol_ppm',
             type: 'line',
-            smooth: true,
+            smooth: !isLargeData, // 大数据时关闭平滑
             showSymbol: false,
             connectNulls: true,
+            // 大数据优化
+            large: isLargeData,
+            largeThreshold: 500,
+            sampling: 'lttb', // 最大三角形三桶降采样，保留视觉特征
             lineStyle: {
               color: '#a855f7',
-              width: 2,
-              shadowColor: 'rgba(168, 85, 247, 0.5)',
-              shadowBlur: 10
+              width: isLargeData ? 1 : 2,
+              // 大数据时关闭阴影
+              shadowColor: isLargeData ? 'transparent' : 'rgba(168, 85, 247, 0.5)',
+              shadowBlur: isLargeData ? 0 : 10
             },
             itemStyle: { color: '#a855f7' },
-            areaStyle: {
+            areaStyle: isLargeData ? null : {
               color: {
                 type: 'linear',
                 x: 0,
@@ -458,17 +501,20 @@ export default {
             name: 'co2_ppm',
             type: 'line',
             yAxisIndex: 1,
-            smooth: true,
+            smooth: !isLargeData,
             showSymbol: false,
             connectNulls: true,
+            large: isLargeData,
+            largeThreshold: 500,
+            sampling: 'lttb',
             lineStyle: {
               color: '#22d3ee',
-              width: 2,
-              shadowColor: 'rgba(34, 211, 238, 0.5)',
-              shadowBlur: 10
+              width: isLargeData ? 1 : 2,
+              shadowColor: isLargeData ? 'transparent' : 'rgba(34, 211, 238, 0.5)',
+              shadowBlur: isLargeData ? 0 : 10
             },
             itemStyle: { color: '#22d3ee' },
-            areaStyle: {
+            areaStyle: isLargeData ? null : {
               color: {
                 type: 'linear',
                 x: 0,
@@ -625,20 +671,41 @@ export default {
     },
 
     seedChartFromLogs(logs) {
-      const seeded = [...logs]
+      // 根据当前tab决定最大显示点数（0表示不限制）
+      const maxPoints = this.activeTab === 'history' ? this.maxChartPointsHistory : this.maxDataPoints
+
+      // 对数据按时间排序
+      let processedLogs = [...logs]
         .slice()
         .sort((a, b) => {
           const aTime = this.parseTimestamp(a.timestamp)?.getTime?.() ?? 0
           const bTime = this.parseTimestamp(b.timestamp)?.getTime?.() ?? 0
           return aTime - bTime
         })
-        .slice(-this.maxDataPoints)
-        .map((item) => ({
-          label: this.formatTimeLabel(item.timestamp),
-          alcohol: item.alcohol_ppm == null ? null : Number(item.alcohol_ppm),
-          co2: item.co2_ppm == null ? null : Number(item.co2_ppm)
-        }))
+
+      // 如果设置了最大点数且数据量超过阈值，进行降采样
+      if (maxPoints > 0 && processedLogs.length > maxPoints) {
+        processedLogs = this.downsampleData(processedLogs, maxPoints)
+      }
+
+      const seeded = processedLogs.map((item) => ({
+        label: this.formatTimeLabel(item.timestamp),
+        alcohol: item.alcohol_ppm == null ? null : Number(item.alcohol_ppm),
+        co2: item.co2_ppm == null ? null : Number(item.co2_ppm)
+      }))
       this.chartPoints = seeded
+    },
+
+    // 降采样算法：保留首尾和均匀采样
+    downsampleData(data, targetCount) {
+      if (data.length <= targetCount) return data
+      const result = []
+      const step = (data.length - 1) / (targetCount - 1)
+      for (let i = 0; i < targetCount; i++) {
+        const index = Math.round(i * step)
+        result.push(data[index])
+      }
+      return result
     },
 
     pushChartPoint(timestamp, alcoholPpm, co2Ppm) {
@@ -714,12 +781,24 @@ export default {
         return bTime - aTime
       })
       this.dataLogs = sortedLogs
+      // 重置分页到第一页
+      this.pagination.currentPage = 1
 
       if (this.activeTab === 'realtime' && this.dataLogs.length > 0) {
         this.sensorData = this.dataLogs[0]
       }
 
       this.seedChartFromLogs(this.dataLogs)
+    },
+
+    // 分页事件处理
+    onPageSizeChange(size) {
+      this.pagination.pageSize = size
+      this.pagination.currentPage = 1
+    },
+
+    onPageChange(page) {
+      this.pagination.currentPage = page
     },
 
     connectWebSocket() {
@@ -923,6 +1002,14 @@ export default {
 }
 
 .table-card {
+  margin-top: 12px;
+}
+
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 0 0;
+  border-top: 1px solid rgba(71, 85, 105, 0.3);
   margin-top: 12px;
 }
 
@@ -1217,6 +1304,54 @@ export default {
 
 :deep(.el-table__empty-text) {
   color: #64748b;
+}
+
+/* Pagination */
+:deep(.el-pagination) {
+  --el-pagination-bg-color: rgba(30, 41, 59, 0.8);
+  --el-pagination-text-color: #94a3b8;
+  --el-pagination-button-color: #94a3b8;
+  --el-pagination-button-bg-color: rgba(30, 41, 59, 0.8);
+  --el-pagination-button-disabled-color: #475569;
+  --el-pagination-button-disabled-bg-color: rgba(30, 41, 59, 0.4);
+  --el-pagination-hover-color: #22d3ee;
+}
+
+:deep(.el-pagination.is-background .el-pager li) {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(71, 85, 105, 0.5);
+}
+
+:deep(.el-pagination.is-background .el-pager li:hover) {
+  color: #22d3ee;
+  border-color: rgba(34, 211, 238, 0.5);
+}
+
+:deep(.el-pagination.is-background .el-pager li.is-active) {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.3), rgba(168, 85, 247, 0.3));
+  border-color: rgba(34, 211, 238, 0.5);
+  color: #22d3ee;
+}
+
+:deep(.el-pagination.is-background .btn-prev),
+:deep(.el-pagination.is-background .btn-next) {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(71, 85, 105, 0.5);
+}
+
+:deep(.el-pagination.is-background .btn-prev:hover),
+:deep(.el-pagination.is-background .btn-next:hover) {
+  color: #22d3ee;
+  border-color: rgba(34, 211, 238, 0.5);
+}
+
+:deep(.el-pagination__total),
+:deep(.el-pagination__jump) {
+  color: #94a3b8;
+}
+
+:deep(.el-pagination__sizes .el-select) {
+  width: 110px;
 }
 
 /* Select Dropdown (needs global style for popper) */
