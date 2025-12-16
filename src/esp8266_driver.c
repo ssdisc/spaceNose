@@ -288,3 +288,45 @@ uint8_t ESP8266_SetTransparentMode(uint8_t enable) {
         return 1;
     }
 }
+
+// ----------------- 自适应采样支持函数 -----------------
+
+/**
+ * @brief 检查缓冲区是否有待处理的数据（非阻塞）
+ * @return 1: 有数据; 0: 无数据
+ */
+uint8_t ESP8266_HasPendingData(void) {
+    // 直接访问本文件中的静态环形缓冲区
+    return (rx_buffer.head != rx_buffer.tail) ? 1 : 0;
+}
+
+/**
+ * @brief 从TCP连接接收数据（非阻塞读取缓冲区）
+ * @param buffer 用于存放数据的缓冲区
+ * @param buffer_size 缓冲区大小
+ * @return 读取到的字节数
+ * @note  此函数会读取并清空缓冲区中的所有数据
+ */
+uint16_t ESP8266_ReceiveTCP(char* buffer, uint16_t buffer_size) {
+    if (buffer == NULL || buffer_size == 0) {
+        return 0;
+    }
+
+    // 使用现有的GetBuffer函数读取数据
+    uint16_t len = ESP8266_GetBuffer(buffer, buffer_size);
+
+    // 过滤ESP8266的+IPD前缀（如果有）
+    // 格式: +IPD,<len>:<data>
+    if (len > 0) {
+        char* data_start = strstr(buffer, ":");
+        if (data_start != NULL && strstr(buffer, "+IPD") != NULL) {
+            // 找到+IPD格式，提取实际数据
+            data_start++; // 跳过':'
+            uint16_t data_len = strlen(data_start);
+            memmove(buffer, data_start, data_len + 1);
+            return data_len;
+        }
+    }
+
+    return len;
+}

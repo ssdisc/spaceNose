@@ -5,15 +5,18 @@ import os
 import asyncio
 import json
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
 
 # 导入数据库相关模块
 from database import init_db, get_db, SessionLocal, SensorDataCRUD
 from models import SensorData
 from config import settings
+from ml_api import router as ml_router
+from ml_service import ml_service
 
 app = FastAPI()
+app.include_router(ml_router)
 
 # 静态文件目录，指向Vue项目的dist目录
 static_folder = os.path.join(os.path.dirname(__file__), "..", "web", "dist")
@@ -36,7 +39,8 @@ class ConnectionManager:
         print(f"✓ WebSocket客户端已连接，当前连接数: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
         print(f"✗ WebSocket客户端已断开，当前连接数: {len(self.active_connections)}")
 
     async def broadcast(self, message: str):
@@ -53,6 +57,54 @@ manager = ConnectionManager()
 TCP_HOST = settings.TCP_HOST
 TCP_PORT = settings.TCP_PORT
 
+# ==================== 自适应采样控制 ====================
+# 活跃的TCP连接（硬件设备）
+active_tcp_writers: Dict[str, asyncio.StreamWriter] = {}
+# 当前采样率（毫秒）
+current_sampling_rate_ms = 5000
+# 高采样模式的采样率
+HIGH_SAMPLE_RATE_MS = 1000
+# 常规采样率
+NORMAL_SAMPLE_RATE_MS = 5000
+# 上次决策状态（避免重复发送指令）
+last_decision_state: Dict[str, str] = {}
+
+async def send_sampling_rate_to_device(writer: asyncio.StreamWriter, rate_ms: int, peer_ip: str = "unknown"):
+    """向硬件发送采样率指令"""
+    try:
+        cmd = json.dumps({"cmd": "set_rate", "rate_ms": rate_ms}) + "\n"
+        writer.write(cmd.encode())
+        await writer.drain()
+        print(f"✓ 向设备 {peer_ip} 发送采样率指令: {rate_ms}ms")
+        return True
+    except Exception as e:
+        print(f"⚠ 发送采样率指令失败 {peer_ip}: {e}")
+        return False
+
+async def trigger_high_sampling(peer_ip: str):
+    """触发高采样模式"""
+    global current_sampling_rate_ms
+    if peer_ip in active_tcp_writers:
+        current_sampling_rate_ms = HIGH_SAMPLE_RATE_MS
+        await send_sampling_rate_to_device(
+            active_tcp_writers[peer_ip],
+            HIGH_SAMPLE_RATE_MS,
+            peer_ip
+        )
+        print(f"⚡ 触发高采样模式: {peer_ip}")
+
+async def restore_normal_sampling(peer_ip: str):
+    """恢复常规采样模式"""
+    global current_sampling_rate_ms
+    if peer_ip in active_tcp_writers:
+        current_sampling_rate_ms = NORMAL_SAMPLE_RATE_MS
+        await send_sampling_rate_to_device(
+            active_tcp_writers[peer_ip],
+            NORMAL_SAMPLE_RATE_MS,
+            peer_ip
+        )
+        print(f"◐ 恢复常规采样模式: {peer_ip}")
+
 # 存储最新的传感器数据
 latest_data = {
     "counter": 0,
@@ -67,10 +119,15 @@ latest_data = {
 }
 
 async def handle_tcp_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-    """处理单个TCP客户端，按行解析JSON"""
+    """处理单个TCP客户端，按行解析JSON，支持双向通信"""
     addr = writer.get_extra_info("peername")
     peer_ip = addr[0] if addr else "unknown"
     print(f"✓ TCP客户端连接: {peer_ip}")
+
+    # 保存writer引用，支持双向通信
+    active_tcp_writers[peer_ip] = writer
+    last_decision_state[peer_ip] = "normal"
+
     try:
         while True:
             data = await reader.readline()
@@ -84,11 +141,25 @@ async def handle_tcp_client(reader: asyncio.StreamReader, writer: asyncio.Stream
                 sensor_data = json.loads(json_str)
                 sensor_data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 sensor_data["co2_ppm"] = sensor_data.get("co2_ppm")
+                sensor_data = ml_service.enrich_realtime_payload(sensor_data)
 
                 global latest_data
                 latest_data = sensor_data
 
                 print(f"✓ 收到数据: {sensor_data}")
+
+                # ========== 自适应采样：根据ML决策自动调整采样率 ==========
+                ml_result = sensor_data.get("ml", {})
+                decision_info = ml_result.get("decision", {})
+                decision_action = decision_info.get("action", "normal")
+
+                # 只在决策状态变化时发送指令（避免重复发送）
+                if decision_action != last_decision_state.get(peer_ip):
+                    if decision_action == "high_sample":
+                        await trigger_high_sampling(peer_ip)
+                    elif decision_action in ("compress", "normal") and last_decision_state.get(peer_ip) == "high_sample":
+                        await restore_normal_sampling(peer_ip)
+                    last_decision_state[peer_ip] = decision_action
 
                 try:
                     db = SessionLocal()
@@ -117,6 +188,11 @@ async def handle_tcp_client(reader: asyncio.StreamReader, writer: asyncio.Stream
     except asyncio.CancelledError:
         pass
     finally:
+        # 清理连接引用
+        if peer_ip in active_tcp_writers:
+            del active_tcp_writers[peer_ip]
+        if peer_ip in last_decision_state:
+            del last_decision_state[peer_ip]
         writer.close()
         await writer.wait_closed()
         print(f"✗ TCP客户端断开: {peer_ip}")
@@ -141,6 +217,12 @@ async def startup_event():
         print(f"✓ 数据库连接成功: {settings.DB_NAME}")
     else:
         print("⚠ 数据库连接失败，请检查配置")
+
+    ml_service.load_models()
+    ml_status = ml_service.status()
+    print(f"✓ ML模块: available={ml_status.get('ml_available')}, "
+          f"scenario_model={ml_status.get('scenario', {}).get('model', {}).get('enabled')}, "
+          f"anomaly_model={ml_status.get('anomaly', {}).get('model', {}).get('enabled')}")
     
     # 启动TCP服务器
     asyncio.create_task(tcp_server())
@@ -172,6 +254,87 @@ async def websocket_endpoint(websocket: WebSocket):
 async def get_latest_data():
     """获取最新的传感器数据（内存中的）"""
     return latest_data
+
+# ==================== 自适应采样API接口 ====================
+
+@app.get("/api/sampling/rate")
+async def get_sampling_rate():
+    """获取当前采样率设置"""
+    return {
+        "success": True,
+        "rate_ms": current_sampling_rate_ms,
+        "mode": "high_sample" if current_sampling_rate_ms == HIGH_SAMPLE_RATE_MS else "normal",
+        "connected_devices": list(active_tcp_writers.keys())
+    }
+
+@app.post("/api/sampling/rate")
+async def set_sampling_rate(rate_ms: int = Query(ge=100, le=60000, description="采样率（毫秒）")):
+    """手动设置硬件采样率 (100ms - 60s)"""
+    global current_sampling_rate_ms
+    current_sampling_rate_ms = rate_ms
+
+    # 向所有连接的硬件发送指令
+    results = {}
+    for ip, writer in active_tcp_writers.items():
+        success = await send_sampling_rate_to_device(writer, rate_ms, ip)
+        results[ip] = "success" if success else "failed"
+
+    return {
+        "success": True,
+        "rate_ms": rate_ms,
+        "devices_updated": results
+    }
+
+@app.post("/api/sampling/high")
+async def trigger_high_sample_mode():
+    """手动触发高采样模式"""
+    global current_sampling_rate_ms
+    current_sampling_rate_ms = HIGH_SAMPLE_RATE_MS
+
+    results = {}
+    for ip, writer in active_tcp_writers.items():
+        success = await send_sampling_rate_to_device(writer, HIGH_SAMPLE_RATE_MS, ip)
+        results[ip] = "success" if success else "failed"
+
+    return {
+        "success": True,
+        "mode": "high_sample",
+        "rate_ms": HIGH_SAMPLE_RATE_MS,
+        "devices_updated": results
+    }
+
+@app.post("/api/sampling/normal")
+async def restore_normal_sample_mode():
+    """恢复常规采样模式"""
+    global current_sampling_rate_ms
+    current_sampling_rate_ms = NORMAL_SAMPLE_RATE_MS
+
+    results = {}
+    for ip, writer in active_tcp_writers.items():
+        success = await send_sampling_rate_to_device(writer, NORMAL_SAMPLE_RATE_MS, ip)
+        results[ip] = "success" if success else "failed"
+
+    return {
+        "success": True,
+        "mode": "normal",
+        "rate_ms": NORMAL_SAMPLE_RATE_MS,
+        "devices_updated": results
+    }
+
+@app.get("/api/devices")
+async def get_connected_devices():
+    """获取当前连接的硬件设备列表"""
+    return {
+        "success": True,
+        "count": len(active_tcp_writers),
+        "devices": [
+            {
+                "ip": ip,
+                "last_decision": last_decision_state.get(ip, "unknown")
+            }
+            for ip in active_tcp_writers.keys()
+        ]
+    }
 
 # ==================== 数据库API接口 ====================
 
@@ -270,20 +433,20 @@ async def cleanup_old_data(
         "message": f"已删除 {days} 天前的 {deleted_count} 条记录"
     }
 
-@app.get("/{full_path:path}")
-async def catch_all(full_path: str):
+@app.get("/")
+async def root():
     """
-    捕获所有路由，并返回index.html，让Vue Router处理。
+    根路由，返回index.html。
     """
     index_path = os.path.join(static_folder, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return {"message": "Frontend not built yet. Run 'npm run build' in the 'web' directory."}
 
-@app.get("/")
-async def root():
+@app.get("/{full_path:path}")
+async def catch_all(full_path: str):
     """
-    根路由，返回index.html。
+    捕获所有路由，并返回index.html，让Vue Router处理。
     """
     index_path = os.path.join(static_folder, "index.html")
     if os.path.exists(index_path):

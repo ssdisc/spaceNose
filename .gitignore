@@ -22,3 +22,6 @@ Thumbs.db
 *.log
 *.tmp
 *~
+
+# 外部数据集（避免误提交）
+datasets/

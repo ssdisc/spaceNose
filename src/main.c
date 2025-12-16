@@ -20,6 +20,11 @@ static const char* WIFI_PASSWORD = "N46065rj";   // 笔记本热点密码
 static const char* SERVER_IP = "192.168.137.1";  // 电脑热点的IP地址
 static const uint16_t SERVER_PORT = 8888;        // TCP服务器端口
 
+/* 自适应采样配置 */
+static volatile uint32_t g_sampling_interval_ms = 5000;  // 动态采样间隔（毫秒）
+#define MIN_SAMPLING_INTERVAL_MS  100    // 最小采样间隔
+#define MAX_SAMPLING_INTERVAL_MS  60000  // 最大采样间隔
+
 /* Private variables */
 UART_HandleTypeDef huart1;  // 调试串口
 UART_HandleTypeDef huart2;  // ESP8266串口
@@ -39,6 +44,9 @@ static uint8_t EnsureTCPConnected(const char* ip, uint16_t port);
 uint8_t ESP8266_Test(void);
 uint8_t ESP8266_ConnectWiFi(const char* ssid, const char* password);
 void ESP8266_GetIPAddress(void);
+
+/* 后端指令解析函数 */
+static void ParseBackendCommand(const char* json_str);
 
 /**
  * @brief  重定向printf到UART1
@@ -138,6 +146,16 @@ int main(void)
     /* 主循环 */
     while (1)
     {
+        /* 检查后端下发的指令（非阻塞） */
+        if (tcp_enabled && ESP8266_HasPendingData()) {
+            char cmd_buf[256] = {0};
+            uint16_t cmd_len = ESP8266_ReceiveTCP(cmd_buf, sizeof(cmd_buf));
+            if (cmd_len > 0) {
+                printf("[指令接收] %s\r\n", cmd_buf);
+                ParseBackendCommand(cmd_buf);
+            }
+        }
+
         /* 周期检查热点与服务器状态 */
         uint32_t now = HAL_GetTick();
         if (!wifi_connected || !tcp_enabled)
@@ -223,8 +241,8 @@ int main(void)
             }
         }
 
-        /* 延时5秒，采集间隔调整为5s */
-        HAL_Delay(5000);
+        /* 使用动态采样间隔 */
+        HAL_Delay(g_sampling_interval_ms);
     }
 }
 
@@ -512,7 +530,7 @@ void Error_Handler(void)
 {
     /* 确保GPIO时钟已使能 */
     __HAL_RCC_GPIOF_CLK_ENABLE();
-    
+
     /* 配置GPIO（以防还没初始化） */
     GPIO_InitTypeDef GPIO_InitStruct = {0};
     GPIO_InitStruct.Pin = GPIO_PIN_9 | GPIO_PIN_10;
@@ -520,12 +538,62 @@ void Error_Handler(void)
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
-    
+
     /* 快速闪烁表示错误 */
     while (1)
     {
         GPIOF->ODR ^= (GPIO_PIN_9 | GPIO_PIN_10);  // 翻转
         for(volatile uint32_t i = 0; i < 200000; i++);
+    }
+}
+
+/**
+ * @brief  解析后端下发的JSON指令
+ * @param  json_str 收到的JSON字符串
+ * @note   支持的指令格式: {"cmd":"set_rate","rate_ms":1000}
+ */
+static void ParseBackendCommand(const char* json_str)
+{
+    if (json_str == NULL || strlen(json_str) == 0) {
+        return;
+    }
+
+    /* 检查是否为set_rate指令 */
+    if (strstr(json_str, "set_rate") != NULL) {
+        /* 简单解析: 查找 "rate_ms": 后面的数字 */
+        const char* rate_ptr = strstr(json_str, "rate_ms");
+        if (rate_ptr != NULL) {
+            /* 跳过 "rate_ms" 和可能的 ": 或 ": 格式 */
+            rate_ptr += 7; // 跳过 "rate_ms"
+
+            /* 跳过冒号和空格 */
+            while (*rate_ptr == '"' || *rate_ptr == ':' || *rate_ptr == ' ') {
+                rate_ptr++;
+            }
+
+            /* 解析数字 */
+            int rate_ms = 0;
+            while (*rate_ptr >= '0' && *rate_ptr <= '9') {
+                rate_ms = rate_ms * 10 + (*rate_ptr - '0');
+                rate_ptr++;
+            }
+
+            /* 验证范围并更新采样率 */
+            if (rate_ms >= MIN_SAMPLING_INTERVAL_MS && rate_ms <= MAX_SAMPLING_INTERVAL_MS) {
+                g_sampling_interval_ms = (uint32_t)rate_ms;
+                printf("[自适应采样] 采样率已更新: %d ms\r\n", rate_ms);
+            } else {
+                printf("[自适应采样] 无效的采样率: %d ms (范围: %d-%d)\r\n",
+                       rate_ms, MIN_SAMPLING_INTERVAL_MS, MAX_SAMPLING_INTERVAL_MS);
+            }
+        }
+    }
+    /* 可扩展其他指令类型 */
+    else if (strstr(json_str, "ping") != NULL) {
+        printf("[指令] 收到ping，系统正常运行\r\n");
+    }
+    else {
+        printf("[指令] 未知指令: %s\r\n", json_str);
     }
 }
 

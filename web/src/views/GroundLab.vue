@@ -43,6 +43,19 @@
               </el-select>
             </el-form-item>
 
+            <!-- 场景科学信息面板 -->
+            <div v-if="mode === 'simulation' && currentScenarioInfo" class="scenario-info-panel">
+              <div class="scenario-info-header">
+                <span class="scenario-name">{{ currentScenarioInfo.name }}</span>
+                <el-tag v-if="currentScenarioInfo.keyGas" size="small" type="warning">
+                  关键气体: {{ getGasLabel(currentScenarioInfo.keyGas) }}
+                </el-tag>
+              </div>
+              <div class="scenario-info-goal">
+                <span class="goal-label">科学目标:</span> {{ currentScenarioInfo.goal }}
+              </div>
+            </div>
+
             <el-form-item label="采样频率 (Hz)">
               <el-slider v-model="sampleHz" :min="0.2" :max="5" :step="0.2" show-input />
             </el-form-item>
@@ -158,6 +171,67 @@
                 <div class="hint">用于演示星上异常检测触发高采样/下传关键片段的效果。</div>
               </el-collapse-item>
 
+              <el-collapse-item title="测试用例管理" name="testcases">
+                <div class="hint">预定义测试场景，自动执行并验证ML模型的预测结果。</div>
+
+                <div class="test-actions">
+                  <el-button
+                    size="small"
+                    type="primary"
+                    :loading="testRunning"
+                    :disabled="mode !== 'simulation'"
+                    @click="runAllTests"
+                  >运行全部测试</el-button>
+                  <el-button size="small" @click="resetTestResults">清除结果</el-button>
+                </div>
+
+                <el-progress
+                  v-if="testRunning"
+                  :percentage="testProgress"
+                  :format="() => `${Math.round(testProgress)}%`"
+                  style="margin: 10px 0;"
+                />
+
+                <div class="test-list">
+                  <div
+                    v-for="tc in testCases"
+                    :key="tc.id"
+                    class="test-item"
+                    :class="{ 'test-running': currentTestId === tc.id }"
+                  >
+                    <div class="test-item-header">
+                      <span class="test-name">{{ tc.name }}</span>
+                      <div class="test-item-actions">
+                        <el-tag size="small" effect="plain">{{ SCENARIO_INFO[tc.scenario]?.name || tc.scenario }}</el-tag>
+                        <el-tag
+                          v-if="testResults[tc.id]"
+                          size="small"
+                          :type="testResults[tc.id].passed ? 'success' : 'danger'"
+                        >
+                          {{ testResults[tc.id].passed ? '通过' : '失败' }}
+                        </el-tag>
+                        <el-button
+                          size="small"
+                          text
+                          :loading="currentTestId === tc.id"
+                          :disabled="testRunning && currentTestId !== tc.id"
+                          @click="runSingleTest(tc)"
+                        >运行</el-button>
+                      </div>
+                    </div>
+                    <div class="test-item-detail">
+                      <span v-if="tc.anomaly">异常: {{ getGasLabel(tc.anomaly.gasKey) }} ×{{ tc.anomaly.multiplier }}</span>
+                      <span v-else>无异常注入</span>
+                      <span>期望: {{ tc.expected.label }} (≥{{ tc.expected.minConfidence * 100 }}%)</span>
+                    </div>
+                    <div v-if="testResults[tc.id] && !testResults[tc.id].passed" class="test-error">
+                      实际: {{ testResults[tc.id].actual?.label || '无' }}
+                      ({{ ((testResults[tc.id].actual?.confidence || 0) * 100).toFixed(1) }}%)
+                    </div>
+                  </div>
+                </div>
+              </el-collapse-item>
+
               <el-collapse-item title="机器学习（场景识别）" name="ml">
                 <div class="hint">
                   使用前端模拟数据（ch4/ph3/so2/h2s/co2/vocs）上传训练集并训练模型；硬件多气体接入后可直接复用。
@@ -219,6 +293,110 @@
 
                 <div class="hint" v-if="mode !== 'simulation'">
                   当前处于“对接后端”模式，多气体特征不足；请先切回“模拟实验”上传训练样本。
+                </div>
+              </el-collapse-item>
+
+              <el-collapse-item title="机器学习（传感器阵列分类）" name="enose">
+                <div class="hint">
+                  使用电子鼻数据集（默认内置 ec-gcms-inference-dataset.csv）训练 delta 特征分类模型，演示“传感器阵列+模式识别”闭环。
+                </div>
+                <div class="ml-actions">
+                  <el-button size="small" :loading="enoseLoading" @click="refreshMlStatus">刷新状态</el-button>
+                  <el-button size="small" type="warning" :loading="enoseTraining" @click="trainEnoseModel">
+                    训练阵列模型
+                  </el-button>
+                  <el-button size="small" type="primary" :loading="enoseSampling" @click="sampleEnoseDataset">
+                    随机抽样
+                  </el-button>
+                  <el-button size="small" type="success" :loading="enosePredicting" @click="predictEnose">
+                    预测该样本
+                  </el-button>
+                </div>
+
+                <div v-if="enoseError" class="ml-error">{{ enoseError }}</div>
+
+                <div v-if="enoseStatus" class="ml-grid">
+                  <div class="ml-kv">
+                    <span>默认数据集</span>
+                    <el-tag
+                      :type="enoseStatus.dataset_exists_default ? 'success' : 'danger'"
+                      effect="plain"
+                      size="small"
+                    >{{ enoseStatus.dataset_exists_default ? '已就绪' : '缺失' }}</el-tag>
+                  </div>
+                  <div class="ml-kv">
+                    <span>模型状态</span>
+                    <el-tag
+                      :type="enoseStatus.model.enabled ? 'success' : 'info'"
+                      effect="plain"
+                      size="small"
+                    >{{ enoseStatus.model.enabled ? '已训练' : '未训练' }}</el-tag>
+                  </div>
+                  <div class="ml-kv">
+                    <span>类别</span>
+                    <span class="ml-value">{{ (enoseStatus.model.classes || []).join(', ') || '—' }}</span>
+                  </div>
+                  <div class="ml-kv">
+                    <span>训练时间</span>
+                    <span class="ml-value">{{ enoseStatus.model.trained_at || '—' }}</span>
+                  </div>
+                </div>
+
+                <div v-if="enoseTrainResult && enoseTrainResult.trained" class="ml-grid mt-10">
+                  <div class="ml-kv">
+                    <span>测试准确率</span>
+                    <span class="ml-value">{{ formatNumber(enoseTrainResult.test_accuracy * 100, 1) }}%</span>
+                  </div>
+                  <div class="ml-kv">
+                    <span>Macro-F1</span>
+                    <span class="ml-value">{{ formatNumber(enoseTrainResult.test_macro_f1, 3) }}</span>
+                  </div>
+                  <div class="ml-kv">
+                    <span>类别数</span>
+                    <span class="ml-value">{{ enoseTrainResult.classes.length }}</span>
+                  </div>
+                  <div class="ml-kv">
+                    <span>样本数</span>
+                    <span class="ml-value">{{ enoseTrainResult.sample_count }}</span>
+                  </div>
+                </div>
+
+                <div v-if="enoseTrainResult && enoseTrainResult.confusion_matrix?.length" class="ml-section">
+                  <div class="section-title">混淆矩阵（测试集）</div>
+                  <el-table :data="confusionRows" size="small" border>
+                    <el-table-column prop="label" label="True \\ Pred" width="140" />
+                    <el-table-column
+                      v-for="cls in enoseTrainResult.confusion_matrix_labels"
+                      :key="cls"
+                      :prop="cls"
+                      :label="cls"
+                      align="center"
+                    />
+                  </el-table>
+                </div>
+
+                <div v-if="enoseSample" class="ml-section">
+                  <div class="section-title">样本特征（delta = stimulus - baseline）</div>
+                  <el-descriptions :column="2" border size="small">
+                    <el-descriptions-item v-for="(v, k) in enoseSample.features" :key="k" :label="k">
+                      {{ v == null ? '—' : formatNumber(v, 6) }}
+                    </el-descriptions-item>
+                  </el-descriptions>
+                  <div class="hint mt-8">
+                    标签（基于 delta 最大通道）: <strong>{{ enoseSample.label }}</strong>
+                  </div>
+                </div>
+
+                <div v-if="enosePrediction" class="ml-result mt-8">
+                  <el-tag :type="enosePrediction.ok ? 'success' : 'info'" effect="dark" size="small">
+                    预测
+                  </el-tag>
+                  <span class="ml-result-text" v-if="enosePrediction.ok">
+                    {{ enosePrediction.label }}（{{ formatNumber(enosePrediction.confidence * 100, 1) }}%）
+                  </span>
+                  <span class="ml-result-text" v-else>
+                    {{ enosePrediction.error || '预测失败' }}
+                  </span>
                 </div>
               </el-collapse-item>
             </el-collapse>
@@ -342,8 +520,63 @@ const SCENARIO_PRESETS = {
   mars: { ch4: 2.0, ph3: 1, so2: 0.1, h2s: 0.05, co2: 800, vocs: 20 },
   venus: { ch4: 0.2, ph3: 20, so2: 0.8, h2s: 0.02, co2: 2000, vocs: 10 },
   comet: { ch4: 0.6, ph3: 3, so2: 0.05, h2s: 0.1, co2: 300, vocs: 80 },
+  europa: { ch4: 0.1, ph3: 0.5, so2: 0.02, h2s: 0.8, co2: 100, vocs: 5 },
+  titan: { ch4: 50.0, ph3: 0.1, so2: 0.01, h2s: 0.01, co2: 50, vocs: 200 },
+  earth_life: { ch4: 1.8, ph3: 0.3, so2: 0.05, h2s: 0.02, co2: 420, vocs: 50 },
+  background: { ch4: 0.01, ph3: 0.01, so2: 0.01, h2s: 0.01, co2: 400, vocs: 1 },
   custom: null
 }
+
+// 场景科学信息
+const SCENARIO_INFO = {
+  mars: { name: '火星 CH₄ 基线', keyGas: 'ch4', goal: '确认甲烷来源（生物 vs 地质）' },
+  venus: { name: '金星 PH₃ 痕量', keyGas: 'ph3', goal: '验证磷化氢是否为生命迹象' },
+  comet: { name: '彗星挥发物', keyGas: 'vocs', goal: '分析彗星有机物成分' },
+  europa: { name: '木卫二冰下海洋', keyGas: 'h2s', goal: '探测可能的热液活动迹象' },
+  titan: { name: '土卫六甲烷湖', keyGas: 'ch4', goal: '研究甲烷循环系统' },
+  earth_life: { name: '地球生命基线', keyGas: 'ch4', goal: '建立生物信号参考基准' },
+  background: { name: '深空背景噪声', keyGas: null, goal: '校准传感器本底噪声' },
+  custom: { name: '自定义场景', keyGas: null, goal: '用户自定义气体配比' }
+}
+
+// 默认测试用例
+const DEFAULT_TEST_CASES = [
+  {
+    id: 1,
+    name: '火星甲烷异常检测',
+    scenario: 'mars',
+    anomaly: { gasKey: 'ch4', multiplier: 5, durationSec: 10 },
+    expected: { label: 'mars', minConfidence: 0.6, anomalyDetected: true }
+  },
+  {
+    id: 2,
+    name: '金星磷化氢峰值',
+    scenario: 'venus',
+    anomaly: { gasKey: 'ph3', multiplier: 3, durationSec: 8 },
+    expected: { label: 'venus', minConfidence: 0.5, anomalyDetected: true }
+  },
+  {
+    id: 3,
+    name: '背景噪声识别',
+    scenario: 'background',
+    anomaly: null,
+    expected: { label: 'background', minConfidence: 0.4, anomalyDetected: false }
+  },
+  {
+    id: 4,
+    name: '木卫二硫化物检测',
+    scenario: 'europa',
+    anomaly: { gasKey: 'h2s', multiplier: 4, durationSec: 6 },
+    expected: { label: 'europa', minConfidence: 0.5, anomalyDetected: true }
+  },
+  {
+    id: 5,
+    name: '地球生命基线验证',
+    scenario: 'earth_life',
+    anomaly: null,
+    expected: { label: 'earth_life', minConfidence: 0.5, anomalyDetected: false }
+  }
+]
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max)
@@ -380,6 +613,10 @@ export default {
         { label: '火星 CH₄ 基线', value: 'mars' },
         { label: '金星 PH₃ 痕量', value: 'venus' },
         { label: '彗星挥发物', value: 'comet' },
+        { label: '木卫二冰下海洋', value: 'europa' },
+        { label: '土卫六甲烷湖', value: 'titan' },
+        { label: '地球生命基线', value: 'earth_life' },
+        { label: '深空背景噪声', value: 'background' },
         { label: '自定义', value: 'custom' }
       ],
 
@@ -422,12 +659,33 @@ export default {
       mlTraining: false,
       mlPredicting: false,
       mlPrediction: null,
-      mlError: ''
+      mlError: '',
+
+      enoseStatus: null,
+      enoseLoading: false,
+      enoseTraining: false,
+      enoseSampling: false,
+      enosePredicting: false,
+      enoseSample: null,
+      enosePrediction: null,
+      enoseTrainResult: null,
+      enoseError: '',
+
+      // 测试用例管理
+      testCases: JSON.parse(JSON.stringify(DEFAULT_TEST_CASES)),
+      testRunning: false,
+      currentTestId: null,
+      testResults: {},
+      testProgress: 0,
+      SCENARIO_INFO: SCENARIO_INFO
     }
   },
   computed: {
     gases() {
       return GAS_META
+    },
+    currentScenarioInfo() {
+      return SCENARIO_INFO[this.scenario] || null
     },
     modeTagText() {
       return this.mode === 'simulation' ? '模拟实验' : '对接后端'
@@ -516,6 +774,17 @@ export default {
     },
     recentEvents() {
       return this.events.slice(-8).reverse()
+    },
+    confusionRows() {
+      if (!this.enoseTrainResult?.confusion_matrix || !this.enoseTrainResult?.confusion_matrix_labels) return []
+      const labels = this.enoseTrainResult.confusion_matrix_labels
+      return this.enoseTrainResult.confusion_matrix.map((row, idx) => {
+        const obj = { label: labels[idx] }
+        labels.forEach((cls, j) => {
+          obj[cls] = row[j]
+        })
+        return obj
+      })
     }
   },
   watch: {
@@ -544,8 +813,19 @@ export default {
       this.resetData()
       this.mlPrediction = null
     },
-    formatNumber(value, unit) {
-      const precision = unit === 'ppb' ? 0 : 3
+    getGasLabel(gasKey) {
+      const gas = GAS_META.find((g) => g.key === gasKey)
+      return gas ? gas.label : gasKey
+    },
+    formatNumber(value, unitOrPrecision, precisionOverride) {
+      let precision
+      if (typeof unitOrPrecision === 'number') {
+        precision = unitOrPrecision
+      } else if (typeof precisionOverride === 'number') {
+        precision = precisionOverride
+      } else {
+        precision = unitOrPrecision === 'ppb' ? 0 : 3
+      }
       return Number(value).toFixed(precision)
     },
     getStatus(gasKey, value) {
@@ -583,6 +863,8 @@ export default {
         this.driftOffsets[gas.key] = 0
       })
       this.anomaly.remainingTicks = 0
+      this.enoseSample = null
+      this.enosePrediction = null
     },
     applyScenarioPreset() {
       if (this.scenario === 'custom') return
@@ -767,19 +1049,25 @@ export default {
 
     async refreshMlStatus() {
       this.mlError = ''
+      this.enoseError = ''
       this.mlLoading = true
+      this.enoseLoading = true
       try {
         const response = await fetch(`${this.apiBaseUrl()}/api/ml/status`)
         const json = await response.json()
         if (json.success && json.data) {
           this.mlStatus = json.data
+          this.enoseStatus = json.data.enose || null
         } else {
           this.mlError = json.data?.error || '获取 ML 状态失败'
+          this.enoseError = this.mlError
         }
       } catch (err) {
         this.mlError = `获取 ML 状态失败：${String(err)}`
+        this.enoseError = this.mlError
       } finally {
         this.mlLoading = false
+        this.enoseLoading = false
       }
     },
 
@@ -861,6 +1149,72 @@ export default {
         this.mlPredicting = false
       }
     },
+
+    async trainEnoseModel() {
+      this.enoseError = ''
+      this.enoseTraining = true
+      try {
+        const response = await fetch(`${this.apiBaseUrl()}/api/ml/enose/train`, { method: 'POST' })
+        const json = await response.json()
+        if (json.success && json.data?.trained) {
+          this.enoseTrainResult = json.data
+          this.addEvent('success', '传感器阵列模型训练完成')
+          await this.refreshMlStatus()
+        } else {
+          this.enoseError = json.data?.error || '训练失败'
+        }
+      } catch (err) {
+        this.enoseError = `训练失败：${String(err)}`
+      } finally {
+        this.enoseTraining = false
+      }
+    },
+
+    async sampleEnoseDataset() {
+      this.enoseError = ''
+      this.enoseSampling = true
+      try {
+        const response = await fetch(`${this.apiBaseUrl()}/api/ml/enose/sample`)
+        const json = await response.json()
+        if (json.success && json.data?.ok) {
+          this.enoseSample = json.data
+          this.addEvent('info', `抽样 index=${json.data.index}，标签=${json.data.label}`)
+        } else {
+          this.enoseError = json.data?.error || '抽样失败'
+        }
+      } catch (err) {
+        this.enoseError = `抽样失败：${String(err)}`
+      } finally {
+        this.enoseSampling = false
+      }
+    },
+
+    async predictEnose() {
+      this.enoseError = ''
+      this.enosePredicting = true
+      try {
+        if (!this.enoseSample?.features) {
+          this.enoseError = '请先抽样得到特征'
+          this.enosePredicting = false
+          return
+        }
+        const response = await fetch(`${this.apiBaseUrl()}/api/ml/enose/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ features: this.enoseSample.features })
+        })
+        const json = await response.json()
+        this.enosePrediction = json.data || { ok: false, error: '预测失败' }
+        if (!json.success) {
+          this.enoseError = this.enosePrediction.error || '预测失败'
+        }
+      } catch (err) {
+        this.enosePrediction = { ok: false, error: String(err) }
+        this.enoseError = `预测失败：${String(err)}`
+      } finally {
+        this.enosePredicting = false
+      }
+    },
     exportXlsx() {
       const rows = this.points.map((p) => {
         const row = { time: p.tLabel }
@@ -926,6 +1280,117 @@ export default {
       const filename = `ground-lab-report_${dayjs().format('YYYYMMDD_HHmmss')}.pdf`
       doc.save(filename)
       this.addEvent('success', `已生成 PDF：${filename}`)
+    },
+
+    // ========== 测试用例管理 ==========
+    sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms))
+    },
+    async runSingleTest(testCase, isPartOfBatch = false) {
+      this.currentTestId = testCase.id
+      if (!isPartOfBatch) {
+        this.testRunning = true
+      }
+
+      try {
+        // 1. 停止当前模拟，清空数据
+        this.stopSimulation()
+        this.resetData()
+        await this.sleep(300)
+
+        // 2. 应用测试场景
+        this.scenario = testCase.scenario
+        this.applyScenarioPreset()
+
+        // 3. 启动模拟收集数据
+        this.startSimulation()
+        await this.sleep(2000) // 收集基线数据
+
+        // 4. 如果有异常配置，注入异常
+        if (testCase.anomaly) {
+          this.anomaly.gasKey = testCase.anomaly.gasKey
+          this.anomaly.multiplier = testCase.anomaly.multiplier
+          this.anomaly.durationSec = testCase.anomaly.durationSec
+          this.injectAnomaly()
+          await this.sleep(testCase.anomaly.durationSec * 1000 + 1000)
+        } else {
+          await this.sleep(3000) // 稳定状态采集
+        }
+
+        // 5. 执行预测
+        await this.predictScenario()
+
+        // 6. 验证结果
+        const result = this.validateTestResult(testCase)
+        this.testResults = {
+          ...this.testResults,
+          [testCase.id]: result
+        }
+
+        this.addEvent(
+          result.passed ? 'success' : 'danger',
+          `测试「${testCase.name}」${result.passed ? '通过' : '失败'}`
+        )
+      } catch (err) {
+        this.testResults = {
+          ...this.testResults,
+          [testCase.id]: { passed: false, error: String(err), actual: null }
+        }
+        this.addEvent('danger', `测试「${testCase.name}」出错: ${err}`)
+      } finally {
+        this.stopSimulation()
+        this.currentTestId = null
+        if (!isPartOfBatch) {
+          this.testRunning = false
+        }
+      }
+
+      return this.testResults[testCase.id]
+    },
+    validateTestResult(testCase) {
+      const prediction = this.mlPrediction
+      if (!prediction || !prediction.ok) {
+        return { passed: false, actual: null, error: '预测失败' }
+      }
+
+      const actualLabel = prediction.label
+      const actualConfidence = prediction.confidence || 0
+      const expectedLabel = testCase.expected.label
+      const minConfidence = testCase.expected.minConfidence
+
+      const labelMatch = actualLabel === expectedLabel
+      const confidenceMatch = actualConfidence >= minConfidence
+
+      return {
+        passed: labelMatch && confidenceMatch,
+        actual: { label: actualLabel, confidence: actualConfidence },
+        expected: testCase.expected,
+        labelMatch,
+        confidenceMatch
+      }
+    },
+    async runAllTests() {
+      this.testRunning = true
+      this.testProgress = 0
+      const total = this.testCases.length
+
+      for (let i = 0; i < total; i++) {
+        const tc = this.testCases[i]
+        await this.runSingleTest(tc, true)  // isPartOfBatch = true
+        this.testProgress = ((i + 1) / total) * 100
+        await this.sleep(500) // 测试间隔
+      }
+
+      this.testRunning = false
+      this.testProgress = 100
+
+      const passed = Object.values(this.testResults).filter((r) => r.passed).length
+      this.addEvent('info', `测试完成: ${passed}/${total} 通过`)
+    },
+    resetTestResults() {
+      this.testResults = {}
+      this.testProgress = 0
+      this.addEvent('info', '已清除测试结果')
     }
   }
 }
@@ -1164,6 +1629,24 @@ export default {
   border-radius: 10px;
   line-height: 1.5;
   font-size: 12px;
+}
+
+.ml-section {
+  margin-top: 14px;
+}
+
+.section-title {
+  font-weight: 700;
+  color: #e2e8f0;
+  margin-bottom: 8px;
+}
+
+.mt-8 {
+  margin-top: 8px;
+}
+
+.mt-10 {
+  margin-top: 10px;
 }
 
 /* 气体卡片 - 太空风格 */
@@ -1449,5 +1932,98 @@ export default {
   .chart {
     height: 300px;
   }
+}
+
+/* 场景科学信息面板 */
+.scenario-info-panel {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.08) 0%, rgba(139, 92, 246, 0.08) 100%);
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.scenario-info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.scenario-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #22d3ee;
+}
+
+.scenario-info-goal {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.5;
+}
+
+.goal-label {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* 测试用例管理样式 */
+.test-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.test-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.test-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 10px 12px;
+  transition: all 0.2s;
+}
+
+.test-item.test-running {
+  border-color: #22d3ee;
+  background: rgba(34, 211, 238, 0.08);
+}
+
+.test-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.test-name {
+  font-weight: 500;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.test-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.test-item-detail {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.test-error {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #ef4444;
 }
 </style>

@@ -1,2 +1,4 @@
 __pycache__/
 .conda/
+ml_models/
+ml_data/

@@ -97,4 +97,18 @@ uint8_t ESP8266_SendTCP(const uint8_t* data, uint16_t len);
  */
 uint8_t ESP8266_SetTransparentMode(uint8_t enable);
 
+/**
+ * @brief 检查缓冲区是否有待处理的数据
+ * @return 1: 有数据; 0: 无数据
+ */
+uint8_t ESP8266_HasPendingData(void);
+
+/**
+ * @brief 从TCP连接接收数据（非阻塞）
+ * @param buffer 用于存放数据的缓冲区
+ * @param buffer_size 缓冲区大小
+ * @return 读取到的字节数
+ */
+uint16_t ESP8266_ReceiveTCP(char* buffer, uint16_t buffer_size);
+
 #endif /* __ESP8266_DRIVER_H */
