@@ -36,22 +36,6 @@
         </div>
         <p class="subtitle">基于智能嗅觉的多星体气体探测任务 · 地面验证实验台</p>
       </div>
-      <div class="top-actions">
-        <el-button
-          :class="['nav-btn', { active: activePath === '/' }]"
-          @click="router.push('/')"
-        >
-          <span class="btn-icon">🔬</span>
-          实验台
-        </el-button>
-        <el-button
-          :class="['nav-btn', { active: activePath === '/visualization' }]"
-          @click="router.push('/visualization')"
-        >
-          <span class="btn-icon">📡</span>
-          实时监控
-        </el-button>
-      </div>
     </header>
 
     <nav class="nav-bar">
@@ -225,44 +209,6 @@ const activePath = computed(() => route.path)
   line-height: 1.6;
   max-width: 760px;
   font-size: 14px;
-}
-
-.top-actions {
-  display: flex;
-  gap: 12px;
-  padding-top: 6px;
-}
-
-.nav-btn {
-  background: rgba(30, 41, 59, 0.8) !important;
-  border: 1px solid rgba(71, 85, 105, 0.5) !important;
-  color: #94a3b8 !important;
-  padding: 10px 20px !important;
-  border-radius: 12px !important;
-  font-weight: 600 !important;
-  transition: all 0.3s ease !important;
-  backdrop-filter: blur(10px);
-  display: flex !important;
-  align-items: center;
-  gap: 8px;
-}
-
-.nav-btn:hover {
-  background: rgba(51, 65, 85, 0.9) !important;
-  border-color: rgba(34, 211, 238, 0.5) !important;
-  color: #e2e8f0 !important;
-  box-shadow: 0 0 20px rgba(34, 211, 238, 0.2);
-}
-
-.nav-btn.active {
-  background: linear-gradient(135deg, rgba(34, 211, 238, 0.2), rgba(168, 85, 247, 0.2)) !important;
-  border-color: rgba(34, 211, 238, 0.6) !important;
-  color: #22d3ee !important;
-  box-shadow: 0 0 25px rgba(34, 211, 238, 0.3), inset 0 0 20px rgba(34, 211, 238, 0.1);
-}
-
-.btn-icon {
-  font-size: 16px;
 }
 
 /* 导航栏 */

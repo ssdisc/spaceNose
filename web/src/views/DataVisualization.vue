@@ -98,6 +98,22 @@
               </template>
               <v-chart class="chart" :option="chartOption" autoresize />
             </el-card>
+
+            <!-- 异常检测时序图 -->
+            <el-card class="glass chart-card anomaly-chart-card" shadow="hover">
+              <template #header>
+                <div class="card-header-row">
+                  <div>异常检测分数</div>
+                  <div class="small-meta">
+                    <el-tag :type="currentAnomalyStatus.tagType" effect="dark" size="small">
+                      {{ currentAnomalyStatus.text }}
+                    </el-tag>
+                    <span>阈值: 0</span>
+                  </div>
+                </div>
+              </template>
+              <v-chart class="chart anomaly-chart" :option="anomalyChartOption" autoresize />
+            </el-card>
           </el-col>
           <el-col :xs="24" :lg="8">
             <el-card class="glass chart-card" shadow="hover">
@@ -278,11 +294,11 @@
 import dayjs from 'dayjs'
 import { use } from 'echarts/core'
 import { LineChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { GridComponent, LegendComponent, TooltipComponent, TitleComponent, MarkLineComponent, VisualMapComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 
-use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
+use([LineChart, GridComponent, LegendComponent, TooltipComponent, TitleComponent, MarkLineComponent, VisualMapComponent, CanvasRenderer])
 
 export default {
   name: 'RealTimeMonitor',
@@ -313,6 +329,7 @@ export default {
       historyLimit: 50,
 
       chartPoints: [],
+      anomalyPoints: [],            // 异常检测分数时序数据
       maxDataPoints: 120,           // 实时模式最大点数
       maxChartPointsHistory: 0,     // 历史模式：0表示不限制，显示全部
 
@@ -531,6 +548,89 @@ export default {
           }
         ]
       }
+    },
+    // 当前异常状态
+    currentAnomalyStatus() {
+      const anomaly = this.sensorData.ml?.anomaly
+      if (!anomaly || !anomaly.ok) {
+        return { text: '未检测', tagType: 'info' }
+      }
+      if (anomaly.label === 'anomaly') {
+        return { text: '检测到异常', tagType: 'danger' }
+      }
+      return { text: '正常', tagType: 'success' }
+    },
+    // 异常检测时序图配置
+    anomalyChartOption() {
+      const labels = this.anomalyPoints.map((p) => p.label)
+      const scores = this.anomalyPoints.map((p) => p.score)
+      const isAnomalies = this.anomalyPoints.map((p) => p.isAnomaly)
+
+      return {
+        backgroundColor: 'transparent',
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: 'rgba(15, 23, 42, 0.9)',
+          borderColor: 'rgba(239, 68, 68, 0.3)',
+          textStyle: { color: '#e2e8f0' },
+          formatter: (params) => {
+            const idx = params[0].dataIndex
+            const score = scores[idx]
+            const isAnomaly = isAnomalies[idx]
+            return `${params[0].axisValue}<br/>
+              分数: ${score?.toFixed(4) || '—'}<br/>
+              状态: ${isAnomaly ? '<span style="color:#ef4444">异常</span>' : '<span style="color:#22c55e">正常</span>'}`
+          }
+        },
+        grid: { left: 50, right: 20, top: 20, bottom: 30 },
+        xAxis: {
+          type: 'category',
+          data: labels,
+          axisLabel: { color: '#64748b', fontSize: 10 },
+          axisLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } }
+        },
+        yAxis: {
+          type: 'value',
+          name: '异常分数',
+          nameTextStyle: { color: '#94a3b8', fontSize: 10 },
+          axisLabel: { color: '#64748b', fontSize: 10 },
+          splitLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.2)' } }
+        },
+        visualMap: {
+          show: false,
+          pieces: [
+            { lte: 0, color: '#ef4444' },
+            { gt: 0, color: '#22c55e' }
+          ]
+        },
+        series: [
+          {
+            name: '异常分数',
+            type: 'line',
+            smooth: true,
+            showSymbol: false,
+            lineStyle: { width: 2 },
+            areaStyle: {
+              color: {
+                type: 'linear',
+                x: 0, y: 0, x2: 0, y2: 1,
+                colorStops: [
+                  { offset: 0, color: 'rgba(239, 68, 68, 0.3)' },
+                  { offset: 0.5, color: 'rgba(239, 68, 68, 0.1)' },
+                  { offset: 1, color: 'rgba(34, 197, 94, 0.1)' }
+                ]
+              }
+            },
+            markLine: {
+              silent: true,
+              symbol: 'none',
+              lineStyle: { color: '#f59e0b', type: 'dashed', width: 1 },
+              data: [{ yAxis: 0, label: { formatter: '阈值', color: '#f59e0b', fontSize: 10 } }]
+            },
+            data: scores
+          }
+        ]
+      }
     }
   },
   watch: {
@@ -694,6 +794,17 @@ export default {
         co2: item.co2_ppm == null ? null : Number(item.co2_ppm)
       }))
       this.chartPoints = seeded
+
+      // 初始化异常检测数据（历史数据可能没有 ml 字段）
+      const anomalySeeded = processedLogs.map((item) => {
+        const anomaly = item.ml?.anomaly
+        return {
+          label: this.formatTimeLabel(item.timestamp),
+          score: anomaly?.ok ? anomaly.score : null,
+          isAnomaly: anomaly?.ok ? anomaly.label === 'anomaly' : false
+        }
+      })
+      this.anomalyPoints = anomalySeeded
     },
 
     // 降采样算法：保留首尾和均匀采样
@@ -716,6 +827,19 @@ export default {
       })
       if (this.chartPoints.length > this.maxDataPoints) {
         this.chartPoints.shift()
+      }
+    },
+
+    pushAnomalyPoint(timestamp, anomalyData) {
+      const score = anomalyData?.ok ? anomalyData.score : null
+      const isAnomaly = anomalyData?.ok ? anomalyData.label === 'anomaly' : false
+      this.anomalyPoints.push({
+        label: this.formatTimeLabel(timestamp),
+        score: score,
+        isAnomaly: isAnomaly
+      })
+      if (this.anomalyPoints.length > this.maxDataPoints) {
+        this.anomalyPoints.shift()
       }
     },
 
@@ -838,6 +962,9 @@ export default {
               this.dataLogs.pop()
             }
             this.pushChartPoint(normalized.timestamp, normalized.alcohol_ppm, normalized.co2_ppm)
+
+            // 收集异常检测分数数据
+            this.pushAnomalyPoint(normalized.timestamp, normalized.ml?.anomaly)
           }
         } catch (error) {
           // ignore
@@ -1378,6 +1505,121 @@ export default {
   color: #64748b !important;
 }
 
+/* ========== 动画效果 ========== */
+
+/* 卡片入场动画 */
+@keyframes cardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.glass {
+  animation: cardFadeIn 0.5s ease-out;
+}
+
+/* 指标卡片悬停动画 */
+.metric-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.metric-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4), 0 0 30px rgba(34, 211, 238, 0.15);
+}
+
+/* 数值变化动画 */
+.metric-value {
+  transition: all 0.3s ease;
+}
+
+/* 连接状态脉冲 */
+@keyframes connectionPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+  }
+}
+
+:deep(.el-tag--success) {
+  animation: connectionPulse 2s ease-in-out infinite;
+}
+
+/* 按钮悬停动画 */
+:deep(.el-button) {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+:deep(.el-button:hover) {
+  transform: translateY(-2px);
+}
+
+:deep(.el-button:active) {
+  transform: translateY(0);
+}
+
+/* 表格行悬停动画 */
+:deep(.el-table__row) {
+  transition: all 0.2s ease;
+}
+
+:deep(.el-table__row:hover) {
+  transform: scale(1.005);
+}
+
+/* Tab 切换动画 */
+.tabs :deep(.el-tabs__content) {
+  transition: all 0.3s ease;
+}
+
+/* 图表容器渐入 */
+.chart-card {
+  animation: cardFadeIn 0.6s ease-out 0.2s both;
+}
+
+/* 数据刷新闪烁 */
+@keyframes dataRefresh {
+  0% { opacity: 1; }
+  50% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+
+.data-refreshing {
+  animation: dataRefresh 0.5s ease;
+}
+
+/* 分页按钮动画 */
+:deep(.el-pagination .el-pager li) {
+  transition: all 0.2s ease;
+}
+
+:deep(.el-pagination .el-pager li:hover) {
+  transform: scale(1.1);
+}
+
+/* 加载状态动画 */
+@keyframes loadingDots {
+  0%, 20% { opacity: 0; }
+  50% { opacity: 1; }
+  80%, 100% { opacity: 0; }
+}
+
+/* KV 项悬停动画 */
+.kv-item {
+  transition: all 0.3s ease;
+}
+
+.kv-item:hover {
+  transform: translateX(4px);
+}
+
 @media (max-width: 900px) {
   .page-head {
     flex-direction: column;
@@ -1386,6 +1628,21 @@ export default {
 
   .chart {
     height: 300px;
+  }
+}
+
+/* 异常检测图表样式 */
+.anomaly-chart-card {
+  margin-top: 14px;
+}
+
+.anomaly-chart {
+  height: 200px;
+}
+
+@media (max-width: 900px) {
+  .anomaly-chart {
+    height: 160px;
   }
 }
 </style>

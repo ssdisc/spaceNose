@@ -18,7 +18,7 @@
     </header>
 
     <el-row :gutter="14">
-      <el-col :xs="24" :lg="7">
+      <el-col :xs="24" :lg="12">
         <el-card class="glass panel" shadow="hover">
           <template #header>
             <div class="panel-title">实验控制台</div>
@@ -100,8 +100,11 @@
 
             <el-divider />
 
-            <el-collapse>
-              <el-collapse-item title="后端字段映射（仅对接后端）" name="mapping">
+            <!-- 使用 Tabs 分组折叠面板 -->
+            <el-tabs v-model="settingsTab" type="border-card" class="settings-tabs">
+              <el-tab-pane label="配置" name="config">
+                <el-collapse accordion>
+                  <el-collapse-item title="后端字段映射" name="mapping">
                 <el-form-item label="来源字段">
                   <el-select v-model="realtimeSourceField">
                     <el-option label="alcohol_ppm" value="alcohol_ppm" />
@@ -176,8 +179,12 @@
                 </el-button>
                 <div class="hint">用于演示星上异常检测触发高采样/下传关键片段的效果。</div>
               </el-collapse-item>
+                </el-collapse>
+              </el-tab-pane>
 
-              <el-collapse-item title="测试用例管理" name="testcases">
+              <el-tab-pane label="测试" name="test">
+                <el-collapse accordion>
+                  <el-collapse-item title="测试用例管理" name="testcases">
                 <div class="hint">预定义测试场景，自动执行并验证ML模型的预测结果。</div>
 
                 <div class="test-actions">
@@ -237,8 +244,12 @@
                   </div>
                 </div>
               </el-collapse-item>
+                </el-collapse>
+              </el-tab-pane>
 
-              <el-collapse-item title="机器学习（场景识别）" name="ml">
+              <el-tab-pane label="机器学习" name="ml">
+                <el-collapse accordion>
+                  <el-collapse-item title="场景识别（传统ML）" name="ml">
                 <div class="hint">
                   使用前端模拟数据（ch4/ph3/so2/h2s/co2/vocs）上传训练集并训练模型；硬件多气体接入后可直接复用。
                 </div>
@@ -405,7 +416,136 @@
                   </span>
                 </div>
               </el-collapse-item>
-            </el-collapse>
+
+              <!-- 深度学习训练与轻量化监控 -->
+              <el-collapse-item title="深度学习模型（Year 1 轻量化）" name="dl">
+                <div class="dl-panel">
+                  <div class="panel-hint">
+                    训练轻量化深度学习模型（1D-CNN + GRU），满足星上部署要求：模型 &lt; 100KB，推理 &lt; 100ms
+                  </div>
+
+                  <!-- 模型轻量化指标仪表盘 -->
+                  <div class="metrics-dashboard">
+                    <div class="metric-gauge" :class="{ 'metric-ok': dlMetrics.model_size_kb < 100 }">
+                      <div class="gauge-value">{{ dlMetrics.model_size_kb?.toFixed(1) || '—' }}</div>
+                      <div class="gauge-label">模型大小 (KB)</div>
+                      <div class="gauge-target">目标 &lt; 100 KB</div>
+                      <div class="gauge-bar">
+                        <div class="gauge-fill" :style="{ width: Math.min((dlMetrics.model_size_kb || 0) / 100 * 100, 100) + '%' }"></div>
+                      </div>
+                    </div>
+                    <div class="metric-gauge" :class="{ 'metric-ok': dlMetrics.inference_time_ms < 100 }">
+                      <div class="gauge-value">{{ dlMetrics.inference_time_ms?.toFixed(2) || '—' }}</div>
+                      <div class="gauge-label">推理时间 (ms)</div>
+                      <div class="gauge-target">目标 &lt; 100 ms</div>
+                      <div class="gauge-bar">
+                        <div class="gauge-fill" :style="{ width: Math.min((dlMetrics.inference_time_ms || 0) / 100 * 100, 100) + '%' }"></div>
+                      </div>
+                    </div>
+                    <div class="metric-gauge metric-accuracy">
+                      <div class="gauge-value">{{ dlMetrics.accuracy ? (dlMetrics.accuracy * 100).toFixed(1) + '%' : '—' }}</div>
+                      <div class="gauge-label">验证准确率</div>
+                      <div class="gauge-target">F1 &gt; 0.92</div>
+                      <div class="gauge-bar accuracy-bar">
+                        <div class="gauge-fill" :style="{ width: (dlMetrics.accuracy || 0) * 100 + '%' }"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 训练控制 -->
+                  <div class="dl-actions">
+                    <el-button size="small" @click="fetchDLMetrics" :loading="dlMetricsLoading">
+                      刷新指标
+                    </el-button>
+                    <el-button size="small" type="warning" @click="trainDLSynthetic" :loading="dlTraining">
+                      训练（合成数据）
+                    </el-button>
+                    <el-button size="small" type="primary" @click="predictWithDecision" :loading="dlPredicting" :disabled="mode !== 'simulation'">
+                      智能决策预测
+                    </el-button>
+                  </div>
+
+                  <!-- 训练进度 -->
+                  <div v-if="dlTraining" class="training-progress">
+                    <el-progress :percentage="dlTrainProgress" :stroke-width="10" :color="['#22d3ee', '#a855f7']" />
+                    <div class="progress-text">训练中... {{ dlTrainProgress }}%</div>
+                  </div>
+
+                  <!-- 训练结果 -->
+                  <div v-if="dlTrainResult" class="dl-train-result">
+                    <div class="result-header">
+                      <el-tag :type="dlTrainResult.trained ? 'success' : 'danger'" effect="dark">
+                        {{ dlTrainResult.trained ? '训练成功' : '训练失败' }}
+                      </el-tag>
+                    </div>
+                    <div v-if="dlTrainResult.trained" class="result-metrics">
+                      <div class="result-item">
+                        <span class="item-label">训练准确率</span>
+                        <span class="item-value">{{ (dlTrainResult.train_accuracy * 100).toFixed(2) }}%</span>
+                      </div>
+                      <div class="result-item">
+                        <span class="item-label">验证准确率</span>
+                        <span class="item-value highlight">{{ (dlTrainResult.val_accuracy * 100).toFixed(2) }}%</span>
+                      </div>
+                      <div class="result-item">
+                        <span class="item-label">模型大小</span>
+                        <span class="item-value">{{ dlTrainResult.model_size_kb?.toFixed(2) }} KB</span>
+                      </div>
+                      <div class="result-item">
+                        <span class="item-label">推理时间</span>
+                        <span class="item-value">{{ dlTrainResult.inference_time_ms?.toFixed(2) }} ms</span>
+                      </div>
+                    </div>
+
+                    <!-- 训练历史曲线图 -->
+                    <div v-if="dlTrainResult.training_history" class="training-charts">
+                      <div class="chart-title">训练监控曲线</div>
+                      <v-chart class="training-chart" :option="trainingLossChartOption" autoresize />
+                      <v-chart class="training-chart" :option="trainingAccuracyChartOption" autoresize />
+                    </div>
+                  </div>
+
+                  <!-- 智能决策结果 -->
+                  <div v-if="dlDecision" class="decision-panel">
+                    <div class="decision-header">智能决策结果</div>
+                    <div class="decision-content">
+                      <!-- 分类结果 -->
+                      <div class="decision-section">
+                        <div class="section-label">场景分类</div>
+                        <div class="classification-result">
+                          <span class="class-label">{{ dlDecision.classification?.label || '—' }}</span>
+                          <span class="class-confidence">{{ dlDecision.classification?.confidence ? (dlDecision.classification.confidence * 100).toFixed(1) + '%' : '' }}</span>
+                        </div>
+                      </div>
+
+                      <!-- 决策类型 -->
+                      <div class="decision-section">
+                        <div class="section-label">决策</div>
+                        <el-tag
+                          :type="getDecisionTagType(dlDecision.decision?.action)"
+                          effect="dark"
+                          size="large"
+                        >
+                          {{ getDecisionText(dlDecision.decision?.action) }}
+                        </el-tag>
+                      </div>
+
+                      <!-- 科学价值雷达图 -->
+                      <div class="decision-section" v-if="dlDecision.decision">
+                        <div class="section-label">科学价值评分</div>
+                        <div class="science-score">
+                          <div class="score-value">{{ (dlDecision.decision.scientific_value * 100).toFixed(0) }}</div>
+                          <div class="score-label">/ 100</div>
+                        </div>
+                        <v-chart class="radar-chart" :option="decisionRadarOption" autoresize />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </el-collapse-item>
+                </el-collapse>
+              </el-tab-pane>
+            </el-tabs>
 
             <el-divider />
 
@@ -421,7 +561,7 @@
         </el-card>
       </el-col>
 
-      <el-col :xs="24" :lg="17">
+      <el-col :xs="24" :lg="12">
         <el-row :gutter="14">
           <el-col :xs="24" :sm="12" :md="8" v-for="gas in gasCards" :key="gas.key">
             <el-card shadow="hover" class="glass gas-card">
@@ -442,7 +582,7 @@
         </el-row>
 
         <el-row :gutter="14" class="section">
-          <el-col :xs="24" :lg="16">
+          <el-col :xs="24">
             <el-card shadow="hover" class="glass chart-card">
               <template #header>
                 <div class="card-header-row">
@@ -458,7 +598,10 @@
               <v-chart class="chart" :option="lineOption" autoresize />
             </el-card>
           </el-col>
-          <el-col :xs="24" :lg="8">
+        </el-row>
+
+        <el-row :gutter="14" class="section">
+          <el-col :xs="24">
             <el-card shadow="hover" class="glass chart-card">
               <template #header>
                 <div class="card-header-row">
@@ -503,15 +646,15 @@
 <script>
 import dayjs from 'dayjs'
 import { use } from 'echarts/core'
-import { LineChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { LineChart, RadarChart } from 'echarts/charts'
+import { GridComponent, LegendComponent, TooltipComponent, TitleComponent, MarkLineComponent, VisualMapComponent, RadarComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 
-use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
+use([LineChart, RadarChart, GridComponent, LegendComponent, TooltipComponent, TitleComponent, MarkLineComponent, VisualMapComponent, RadarComponent, CanvasRenderer])
 
 const GAS_META = [
   { key: 'ch4', label: '甲烷 CH₄', unit: 'ppm', axis: 0, color: '#22c55e' },
@@ -692,6 +835,7 @@ export default {
     })
 
     return {
+      settingsTab: 'config',
       mode: 'simulation',
       scenario: 'mars',
       scenarioOptions: [
@@ -755,6 +899,20 @@ export default {
       enosePrediction: null,
       enoseTrainResult: null,
       enoseError: '',
+
+      // 深度学习模型
+      dlMetrics: {
+        model_size_kb: null,
+        inference_time_ms: null,
+        accuracy: null,
+        available: false
+      },
+      dlMetricsLoading: false,
+      dlTraining: false,
+      dlTrainProgress: 0,
+      dlTrainResult: null,
+      dlPredicting: false,
+      dlDecision: null,
 
       // 测试用例管理
       testCases: JSON.parse(JSON.stringify(DEFAULT_TEST_CASES)),
@@ -870,6 +1028,185 @@ export default {
         })
         return obj
       })
+    },
+    // 智能决策雷达图配置
+    decisionRadarOption() {
+      if (!this.dlDecision?.decision) return {}
+      const decision = this.dlDecision.decision
+      const classification = this.dlDecision.classification || {}
+      return {
+        backgroundColor: 'transparent',
+        radar: {
+          indicator: [
+            { name: '分类置信度', max: 1 },
+            { name: '科学价值', max: 1 },
+            { name: '异常程度', max: 1 },
+            { name: '数据质量', max: 1 },
+            { name: '优先级', max: 1 }
+          ],
+          shape: 'polygon',
+          splitNumber: 4,
+          axisName: { color: '#94a3b8', fontSize: 10 },
+          splitLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } },
+          splitArea: { areaStyle: { color: ['rgba(34, 211, 238, 0.05)', 'rgba(168, 85, 247, 0.05)'] } },
+          axisLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } }
+        },
+        series: [{
+          type: 'radar',
+          data: [{
+            value: [
+              classification.confidence || 0,
+              decision.scientific_value || 0,
+              1 - (this.dlDecision.anomaly_detection?.is_normal ? 1 : 0.3),
+              0.85,
+              decision.action === 'priority' ? 1 : decision.action === 'high_sample' ? 0.9 : decision.action === 'normal' ? 0.5 : 0.2
+            ],
+            name: '决策指标',
+            areaStyle: {
+              color: {
+                type: 'linear',
+                x: 0, y: 0, x2: 1, y2: 1,
+                colorStops: [
+                  { offset: 0, color: 'rgba(34, 211, 238, 0.4)' },
+                  { offset: 1, color: 'rgba(168, 85, 247, 0.4)' }
+                ]
+              }
+            },
+            lineStyle: { color: '#22d3ee', width: 2 },
+            itemStyle: { color: '#22d3ee' }
+          }]
+        }]
+      }
+    },
+    // 训练损失曲线图配置
+    trainingLossChartOption() {
+      if (!this.dlTrainResult?.training_history?.loss) return {}
+      const losses = this.dlTrainResult.training_history.loss
+      const epochs = losses.map((_, i) => i + 1)
+      return {
+        backgroundColor: 'transparent',
+        title: {
+          text: '训练损失',
+          left: 'center',
+          top: 0,
+          textStyle: { color: '#94a3b8', fontSize: 12, fontWeight: 'normal' }
+        },
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: 'rgba(15, 23, 42, 0.9)',
+          borderColor: 'rgba(34, 211, 238, 0.3)',
+          textStyle: { color: '#e2e8f0', fontSize: 11 }
+        },
+        grid: { left: 40, right: 20, top: 30, bottom: 25 },
+        xAxis: {
+          type: 'category',
+          data: epochs,
+          name: 'Epoch',
+          nameTextStyle: { color: '#64748b', fontSize: 10 },
+          axisLabel: { color: '#64748b', fontSize: 10 },
+          axisLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } }
+        },
+        yAxis: {
+          type: 'value',
+          name: 'Loss',
+          nameTextStyle: { color: '#64748b', fontSize: 10 },
+          axisLabel: { color: '#64748b', fontSize: 10 },
+          splitLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.3)' } }
+        },
+        series: [{
+          name: 'Loss',
+          type: 'line',
+          smooth: true,
+          showSymbol: false,
+          lineStyle: { color: '#ef4444', width: 2 },
+          areaStyle: {
+            color: {
+              type: 'linear',
+              x: 0, y: 0, x2: 0, y2: 1,
+              colorStops: [
+                { offset: 0, color: 'rgba(239, 68, 68, 0.3)' },
+                { offset: 1, color: 'rgba(239, 68, 68, 0)' }
+              ]
+            }
+          },
+          data: losses
+        }]
+      }
+    },
+    // 训练准确率曲线图配置
+    trainingAccuracyChartOption() {
+      if (!this.dlTrainResult?.training_history) return {}
+      const history = this.dlTrainResult.training_history
+      const trainAcc = history.train_accuracy || []
+      const valAcc = history.val_accuracy || []
+      const epochs = trainAcc.map((_, i) => i + 1)
+      return {
+        backgroundColor: 'transparent',
+        title: {
+          text: '准确率趋势',
+          left: 'center',
+          top: 0,
+          textStyle: { color: '#94a3b8', fontSize: 12, fontWeight: 'normal' }
+        },
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: 'rgba(15, 23, 42, 0.9)',
+          borderColor: 'rgba(34, 211, 238, 0.3)',
+          textStyle: { color: '#e2e8f0', fontSize: 11 },
+          formatter: (params) => {
+            let result = `Epoch ${params[0].axisValue}<br/>`
+            params.forEach((p) => {
+              result += `${p.marker} ${p.seriesName}: ${(p.value * 100).toFixed(1)}%<br/>`
+            })
+            return result
+          }
+        },
+        legend: {
+          top: 20,
+          data: ['训练准确率', '验证准确率'],
+          textStyle: { color: '#94a3b8', fontSize: 10 }
+        },
+        grid: { left: 40, right: 20, top: 50, bottom: 25 },
+        xAxis: {
+          type: 'category',
+          data: epochs,
+          name: 'Epoch',
+          nameTextStyle: { color: '#64748b', fontSize: 10 },
+          axisLabel: { color: '#64748b', fontSize: 10 },
+          axisLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } }
+        },
+        yAxis: {
+          type: 'value',
+          name: 'Accuracy',
+          min: 0,
+          max: 1,
+          nameTextStyle: { color: '#64748b', fontSize: 10 },
+          axisLabel: {
+            color: '#64748b',
+            fontSize: 10,
+            formatter: (v) => `${(v * 100).toFixed(0)}%`
+          },
+          splitLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.3)' } }
+        },
+        series: [
+          {
+            name: '训练准确率',
+            type: 'line',
+            smooth: true,
+            showSymbol: false,
+            lineStyle: { color: '#22c55e', width: 2 },
+            data: trainAcc
+          },
+          {
+            name: '验证准确率',
+            type: 'line',
+            smooth: true,
+            showSymbol: false,
+            lineStyle: { color: '#22d3ee', width: 2 },
+            data: valAcc
+          }
+        ]
+      }
     }
   },
   watch: {
@@ -1476,6 +1813,127 @@ export default {
       this.testResults = {}
       this.testProgress = 0
       this.addEvent('info', '已清除测试结果')
+    },
+
+    // ========== 深度学习相关方法 ==========
+    async fetchDLMetrics() {
+      this.dlMetricsLoading = true
+      try {
+        const response = await fetch(`${this.apiBaseUrl()}/api/ml/dl/metrics`)
+        const json = await response.json()
+        if (json.success && json.data) {
+          const data = json.data
+          this.dlMetrics = {
+            model_size_kb: data.classifier?.size_kb || null,
+            inference_time_ms: data.classifier?.inference_time_ms || null,
+            accuracy: this.dlTrainResult?.val_accuracy || null,
+            available: data.available || false
+          }
+        }
+      } catch (err) {
+        this.addEvent('warning', `获取 DL 指标失败: ${err}`)
+      } finally {
+        this.dlMetricsLoading = false
+      }
+    },
+
+    async trainDLSynthetic() {
+      this.dlTraining = true
+      this.dlTrainProgress = 0
+      this.dlTrainResult = null
+
+      // 模拟训练进度
+      const progressInterval = setInterval(() => {
+        if (this.dlTrainProgress < 90) {
+          this.dlTrainProgress += Math.random() * 15
+        }
+      }, 500)
+
+      try {
+        const response = await fetch(`${this.apiBaseUrl()}/api/ml/dl/train/synthetic?epochs=50&batch_size=32`, {
+          method: 'POST'
+        })
+        const json = await response.json()
+        this.dlTrainProgress = 100
+
+        if (json.success && json.data) {
+          this.dlTrainResult = json.data
+          this.addEvent('success', `深度学习模型训练完成，验证准确率: ${(json.data.val_accuracy * 100).toFixed(1)}%`)
+
+          // 更新指标
+          this.dlMetrics = {
+            model_size_kb: json.data.model_size_kb,
+            inference_time_ms: json.data.inference_time_ms,
+            accuracy: json.data.val_accuracy,
+            available: true
+          }
+        } else {
+          this.dlTrainResult = { trained: false, error: json.data?.error || '训练失败' }
+          this.addEvent('danger', `深度学习模型训练失败: ${json.data?.error || '未知错误'}`)
+        }
+      } catch (err) {
+        this.dlTrainResult = { trained: false, error: String(err) }
+        this.addEvent('danger', `深度学习模型训练失败: ${err}`)
+      } finally {
+        clearInterval(progressInterval)
+        this.dlTraining = false
+      }
+    },
+
+    async predictWithDecision() {
+      if (this.mode !== 'simulation') return
+      this.dlPredicting = true
+      this.dlDecision = null
+
+      try {
+        const features = this.currentScenarioVector()
+        const response = await fetch(`${this.apiBaseUrl()}/api/ml/dl/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ features })
+        })
+        const json = await response.json()
+
+        if (json.success && json.data?.ok) {
+          this.dlDecision = {
+            classification: {
+              label: json.data.classification?.class_name || '—',
+              confidence: json.data.classification?.confidence || 0,
+              probabilities: json.data.classification?.probabilities || {}
+            },
+            anomaly_detection: json.data.anomaly_detection || {},
+            decision: json.data.decision || {},
+            metrics: json.data.metrics || {}
+          }
+          this.addEvent('info', `智能决策: ${json.data.decision?.action} (科学价值: ${(json.data.decision?.scientific_value * 100).toFixed(0)})`)
+        } else {
+          this.addEvent('warning', `智能决策预测失败: ${json.data?.error || '未知错误'}`)
+        }
+      } catch (err) {
+        this.addEvent('danger', `智能决策预测失败: ${err}`)
+      } finally {
+        this.dlPredicting = false
+      }
+    },
+
+    getDecisionTagType(action) {
+      const typeMap = {
+        compress: 'info',
+        normal: 'success',
+        priority: 'warning',
+        high_sample: 'danger'
+      }
+      return typeMap[action] || 'info'
+    },
+
+    getDecisionText(action) {
+      const textMap = {
+        compress: '压缩存储',
+        normal: '正常存储',
+        priority: '优先下传',
+        high_sample: '高采样模式'
+      }
+      return textMap[action] || action || '—'
     }
   }
 }
@@ -1637,6 +2095,238 @@ export default {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+/* 设置 Tabs 样式 */
+.settings-tabs {
+  background: transparent !important;
+  border: none !important;
+}
+
+.settings-tabs :deep(.el-tabs__header) {
+  background: rgba(30, 41, 59, 0.4);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(71, 85, 105, 0.3);
+}
+
+.settings-tabs :deep(.el-tabs__nav-wrap) {
+  background: transparent;
+}
+
+.settings-tabs :deep(.el-tabs__item) {
+  color: #94a3b8;
+  font-weight: 500;
+  padding: 0 16px;
+  height: 36px;
+  line-height: 36px;
+}
+
+.settings-tabs :deep(.el-tabs__item.is-active) {
+  color: #22d3ee;
+  background: rgba(34, 211, 238, 0.1);
+}
+
+.settings-tabs :deep(.el-tabs__item:hover) {
+  color: #22d3ee;
+}
+
+.settings-tabs :deep(.el-tabs__content) {
+  padding: 0;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.settings-tabs :deep(.el-tab-pane) {
+  padding: 4px;
+}
+
+/* 折叠面板优化 */
+:deep(.el-collapse-item__header) {
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(71, 85, 105, 0.3);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #e2e8f0;
+  transition: all 0.3s ease;
+}
+
+:deep(.el-collapse-item__header:hover) {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(34, 211, 238, 0.4);
+}
+
+:deep(.el-collapse-item__wrap) {
+  background: transparent;
+  border: none;
+}
+
+:deep(.el-collapse-item__content) {
+  padding: 12px 16px;
+  background: rgba(15, 23, 42, 0.3);
+  border: 1px solid rgba(71, 85, 105, 0.2);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+/* ========== 动画效果 ========== */
+
+/* 卡片入场动画 */
+@keyframes cardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.glass {
+  animation: cardFadeIn 0.5s ease-out;
+}
+
+/* 气体卡片悬停动画 */
+.gas-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.gas-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4), 0 0 30px rgba(34, 211, 238, 0.15);
+}
+
+/* 数值变化动画 */
+@keyframes valueFlash {
+  0% { color: #22d3ee; }
+  50% { color: #67e8f9; text-shadow: 0 0 20px rgba(34, 211, 238, 0.8); }
+  100% { color: #22d3ee; }
+}
+
+.gas-value {
+  transition: all 0.3s ease;
+}
+
+/* 状态标签脉冲动画 */
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.status-tag-danger {
+  animation: statusPulse 1.5s ease-in-out infinite;
+}
+
+/* 按钮悬停动画 */
+:deep(.el-button) {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+:deep(.el-button:hover) {
+  transform: translateY(-2px);
+}
+
+:deep(.el-button:active) {
+  transform: translateY(0);
+}
+
+/* 进度条动画 */
+:deep(.el-progress-bar__inner) {
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 折叠面板展开动画 */
+:deep(.el-collapse-item__wrap) {
+  transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 图表容器渐入 */
+.chart-card {
+  animation: cardFadeIn 0.6s ease-out 0.2s both;
+}
+
+/* 测试项动画 */
+.test-item {
+  transition: all 0.3s ease;
+}
+
+.test-item:hover {
+  transform: translateX(4px);
+  border-color: rgba(34, 211, 238, 0.4);
+}
+
+.test-running {
+  animation: testRunningPulse 1s ease-in-out infinite;
+}
+
+@keyframes testRunningPulse {
+  0%, 100% {
+    border-color: rgba(34, 211, 238, 0.5);
+    box-shadow: 0 0 10px rgba(34, 211, 238, 0.2);
+  }
+  50% {
+    border-color: rgba(34, 211, 238, 0.8);
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.4);
+  }
+}
+
+/* 数据加载动画 */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.loading-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(30, 41, 59, 0.5) 25%,
+    rgba(51, 65, 85, 0.5) 50%,
+    rgba(30, 41, 59, 0.5) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* 事件日志滚动动画 */
+.event-item {
+  animation: eventSlideIn 0.3s ease-out;
+}
+
+@keyframes eventSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ML 预测结果动画 */
+.ml-result {
+  animation: resultFadeIn 0.4s ease-out;
+}
+
+@keyframes resultFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 图表数据点闪烁（用于新数据） */
+@keyframes dataPointFlash {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
 }
 
 .grid-2 {
@@ -2129,5 +2819,276 @@ export default {
   margin-top: 6px;
   font-size: 11px;
   color: #ef4444;
+}
+
+/* ========== 深度学习面板样式 ========== */
+.dl-panel {
+  padding: 4px 0;
+}
+
+.panel-hint {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  background: rgba(30, 41, 59, 0.5);
+  border-radius: 6px;
+  border-left: 3px solid #22d3ee;
+}
+
+/* 模型轻量化仪表盘 */
+.metrics-dashboard {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.metric-gauge {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(71, 85, 105, 0.4);
+  border-radius: 10px;
+  padding: 12px;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.metric-gauge:hover {
+  border-color: rgba(34, 211, 238, 0.4);
+  transform: translateY(-2px);
+}
+
+.metric-gauge.metric-ok {
+  border-color: rgba(34, 197, 94, 0.5);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.metric-gauge.metric-ok .gauge-value {
+  color: #22c55e;
+}
+
+.gauge-value {
+  font-size: 24px;
+  font-weight: 800;
+  color: #22d3ee;
+  margin-bottom: 4px;
+}
+
+.gauge-label {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+
+.gauge-target {
+  font-size: 10px;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.gauge-bar {
+  height: 4px;
+  background: rgba(71, 85, 105, 0.5);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.gauge-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #22d3ee, #a855f7);
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+.metric-accuracy .gauge-fill {
+  background: linear-gradient(90deg, #22c55e, #22d3ee);
+}
+
+/* 深度学习操作按钮 */
+.dl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* 训练进度 */
+.training-progress {
+  margin: 12px 0;
+  padding: 12px;
+  background: rgba(30, 41, 59, 0.5);
+  border-radius: 8px;
+  border: 1px solid rgba(34, 211, 238, 0.3);
+}
+
+.progress-text {
+  text-align: center;
+  font-size: 12px;
+  color: #22d3ee;
+  margin-top: 8px;
+}
+
+/* 训练结果 */
+.dl-train-result {
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(30, 41, 59, 0.5);
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.4);
+}
+
+.result-header {
+  margin-bottom: 10px;
+}
+
+.result-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.result-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.5);
+  border-radius: 6px;
+  border: 1px solid rgba(71, 85, 105, 0.3);
+}
+
+.item-label {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.item-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.item-value.highlight {
+  color: #22d3ee;
+  font-size: 14px;
+}
+
+/* 训练历史曲线图 */
+.training-charts {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(71, 85, 105, 0.3);
+}
+
+.chart-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.training-chart {
+  height: 180px;
+  margin-bottom: 10px;
+}
+
+/* 智能决策面板 */
+.decision-panel {
+  margin-top: 14px;
+  padding: 14px;
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.08) 0%, rgba(168, 85, 247, 0.08) 100%);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  border-radius: 10px;
+}
+
+.decision-header {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.3);
+}
+
+.decision-content {
+  display: grid;
+  gap: 12px;
+}
+
+.decision-section {
+  padding: 10px;
+  background: rgba(15, 23, 42, 0.4);
+  border-radius: 8px;
+}
+
+.section-label {
+  font-size: 10px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 6px;
+}
+
+.classification-result {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.class-label {
+  font-size: 18px;
+  font-weight: 700;
+  color: #22d3ee;
+}
+
+.class-confidence {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* 科学价值评分 */
+.science-score {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.score-value {
+  font-size: 32px;
+  font-weight: 800;
+  background: linear-gradient(135deg, #22d3ee, #a855f7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.score-label {
+  font-size: 14px;
+  color: #64748b;
+}
+
+/* 雷达图 */
+.radar-chart {
+  height: 200px;
+}
+
+@media (max-width: 600px) {
+  .metrics-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .result-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .training-chart {
+    height: 150px;
+  }
+
+  .radar-chart {
+    height: 160px;
+  }
 }
 </style>
