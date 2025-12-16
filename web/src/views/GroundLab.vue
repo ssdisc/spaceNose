@@ -54,6 +54,12 @@
               <div class="scenario-info-goal">
                 <span class="goal-label">科学目标:</span> {{ currentScenarioInfo.goal }}
               </div>
+              <div v-if="currentScenarioInfo.note" class="scenario-info-note">
+                <span class="note-label">特征:</span> {{ currentScenarioInfo.note }}
+              </div>
+              <div v-if="currentScenarioInfo.source" class="scenario-info-source">
+                <span class="source-label">数据来源:</span> {{ currentScenarioInfo.source }}
+              </div>
             </div>
 
             <el-form-item label="采样频率 (Hz)">
@@ -516,27 +522,106 @@ const GAS_META = [
   { key: 'vocs', label: 'VOCs', unit: 'ppb', axis: 1, color: '#64748b' }
 ]
 
+/**
+ * 场景预设 - 基于 NASA/ESA 行星探测数据
+ * 单位: ppm (百万分之一)
+ * 数据来源:
+ * - Mars: NASA Curiosity/TGO (CH4 季节性波动 0.24-0.65 ppb)
+ * - Venus: ESA Venus Express (SO2 ~150 ppm, PH3 争议 ~20 ppb)
+ * - Comet: ESA Rosetta/67P (H2S ~1.5%, CH4 ~0.5%)
+ * - Titan: NASA Cassini (CH4 ~5%)
+ * - Europa: 理论模型 (假设热液活动)
+ * - Earth: NOAA 2023 (CH4 1.9 ppm, CO2 420 ppm)
+ */
 const SCENARIO_PRESETS = {
-  mars: { ch4: 2.0, ph3: 1, so2: 0.1, h2s: 0.05, co2: 800, vocs: 20 },
-  venus: { ch4: 0.2, ph3: 20, so2: 0.8, h2s: 0.02, co2: 2000, vocs: 10 },
-  comet: { ch4: 0.6, ph3: 3, so2: 0.05, h2s: 0.1, co2: 300, vocs: 80 },
-  europa: { ch4: 0.1, ph3: 0.5, so2: 0.02, h2s: 0.8, co2: 100, vocs: 5 },
-  titan: { ch4: 50.0, ph3: 0.1, so2: 0.01, h2s: 0.01, co2: 50, vocs: 200 },
-  earth_life: { ch4: 1.8, ph3: 0.3, so2: 0.05, h2s: 0.02, co2: 420, vocs: 50 },
-  background: { ch4: 0.01, ph3: 0.01, so2: 0.01, h2s: 0.01, co2: 400, vocs: 1 },
+  // 火星大气 - 好奇号/TGO数据
+  // 关键: CH4 是唯一潜在生物标志，浓度极低
+  mars: { ch4: 0.0005, ph3: 0, so2: 0.001, h2s: 0.001, co2: 9500, vocs: 0.01 },
+
+  // 金星云层 - 金星快车/先驱者数据
+  // 关键: SO2 高, PH3 争议性探测 (Greaves et al. 2020)
+  venus: { ch4: 0.001, ph3: 0.00002, so2: 150, h2s: 0.5, co2: 9600, vocs: 0.01 },
+
+  // 彗星67P彗发 - Rosetta ROSINA数据
+  // 关键: H2S 和 VOCs 丰富, 原始太阳系物质
+  comet: { ch4: 500, ph3: 0.0001, so2: 10, h2s: 1500, co2: 1000, vocs: 2000 },
+
+  // 木卫二 - 假设冰下海洋热液喷口
+  // 关键: H2S 是热液活动标志 (理论推测)
+  europa: { ch4: 0.1, ph3: 0, so2: 0.01, h2s: 10, co2: 50, vocs: 0.5 },
+
+  // 土卫六 - 卡西尼-惠更斯数据
+  // 关键: CH4 循环 (液态甲烷湖), 复杂有机物
+  titan: { ch4: 50000, ph3: 0, so2: 0.001, h2s: 0.01, co2: 10, vocs: 500 },
+
+  // 地球生命基线 - NOAA 2023
+  // 关键: CH4 生物源, CO2 当前水平
+  earth_life: { ch4: 1.9, ph3: 0.00001, so2: 0.005, h2s: 0.05, co2: 420, vocs: 0.5 },
+
+  // 深空背景/仪器本底
+  background: { ch4: 0.00001, ph3: 0, so2: 0.00001, h2s: 0.00001, co2: 0.1, vocs: 0.001 },
+
   custom: null
 }
 
 // 场景科学信息
 const SCENARIO_INFO = {
-  mars: { name: '火星 CH₄ 基线', keyGas: 'ch4', goal: '确认甲烷来源（生物 vs 地质）' },
-  venus: { name: '金星 PH₃ 痕量', keyGas: 'ph3', goal: '验证磷化氢是否为生命迹象' },
-  comet: { name: '彗星挥发物', keyGas: 'vocs', goal: '分析彗星有机物成分' },
-  europa: { name: '木卫二冰下海洋', keyGas: 'h2s', goal: '探测可能的热液活动迹象' },
-  titan: { name: '土卫六甲烷湖', keyGas: 'ch4', goal: '研究甲烷循环系统' },
-  earth_life: { name: '地球生命基线', keyGas: 'ch4', goal: '建立生物信号参考基准' },
-  background: { name: '深空背景噪声', keyGas: null, goal: '校准传感器本底噪声' },
-  custom: { name: '自定义场景', keyGas: null, goal: '用户自定义气体配比' }
+  mars: {
+    name: '火星大气',
+    keyGas: 'ch4',
+    goal: '检测 ppb 级 CH₄，区分生物源/地质源',
+    source: 'NASA Curiosity SAM, ESA TGO',
+    note: 'CH₄ 季节性波动 0.24-0.65 ppb，CO₂ 占 95%'
+  },
+  venus: {
+    name: '金星云层',
+    keyGas: 'so2',
+    goal: '验证 PH₃ 争议探测，分析 SO₂/H₂SO₄',
+    source: 'ESA Venus Express, Greaves 2020',
+    note: 'SO₂ ~150 ppm，PH₃ ~20 ppb (争议)'
+  },
+  comet: {
+    name: '彗星 67P 彗发',
+    keyGas: 'vocs',
+    goal: '分析原始太阳系有机物组成',
+    source: 'ESA Rosetta ROSINA',
+    note: 'H₂S ~1.5%, VOCs 丰富，含氨基酸前体'
+  },
+  europa: {
+    name: '木卫二热液',
+    keyGas: 'h2s',
+    goal: '探测冰下海洋热液活动迹象',
+    source: '理论模型 + HST 观测',
+    note: 'H₂S 是热液活动关键标志'
+  },
+  titan: {
+    name: '土卫六甲烷湖',
+    keyGas: 'ch4',
+    goal: '研究甲烷循环与复杂有机化学',
+    source: 'NASA Cassini-Huygens',
+    note: 'CH₄ ~5%，存在液态甲烷湖'
+  },
+  earth_life: {
+    name: '地球生命基线',
+    keyGas: 'ch4',
+    goal: '建立生物信号参考基准',
+    source: 'NOAA GML 2023',
+    note: 'CH₄ 1.9 ppm，CO₂ 420 ppm'
+  },
+  background: {
+    name: '深空背景',
+    keyGas: null,
+    goal: '校准传感器本底噪声',
+    source: '仪器基线',
+    note: '用于零点校准'
+  },
+  custom: {
+    name: '自定义场景',
+    keyGas: null,
+    goal: '用户自定义气体配比',
+    source: '用户输入',
+    note: ''
+  }
 }
 
 // 默认测试用例
@@ -1963,8 +2048,27 @@ export default {
   line-height: 1.5;
 }
 
-.goal-label {
+.scenario-info-note {
+  font-size: 11px;
+  color: #22d3ee;
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(34, 211, 238, 0.1);
+  border-radius: 4px;
+}
+
+.scenario-info-source {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 6px;
+  font-style: italic;
+}
+
+.goal-label,
+.note-label,
+.source-label {
   color: rgba(255, 255, 255, 0.5);
+  margin-right: 4px;
 }
 
 /* 测试用例管理样式 */
