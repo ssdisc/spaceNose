@@ -657,12 +657,12 @@ import { autoTable } from 'jspdf-autotable'
 use([LineChart, RadarChart, GridComponent, LegendComponent, TooltipComponent, TitleComponent, MarkLineComponent, VisualMapComponent, RadarComponent, CanvasRenderer])
 
 const GAS_META = [
-  { key: 'ch4', label: '甲烷 CH₄', unit: 'ppm', axis: 0, color: '#22c55e' },
+  { key: 'ch4', label: '甲烷 CH₄', unit: 'ppm', axis: 0, color: '#22d3ee' },
   { key: 'ph3', label: '磷化氢 PH₃', unit: 'ppb', axis: 1, color: '#a855f7' },
   { key: 'so2', label: '二氧化硫 SO₂', unit: 'ppm', axis: 0, color: '#f59e0b' },
   { key: 'h2s', label: '硫化氢 H₂S', unit: 'ppm', axis: 0, color: '#ef4444' },
-  { key: 'co2', label: '二氧化碳 CO₂', unit: 'ppm', axis: 0, color: '#0ea5e9' },
-  { key: 'vocs', label: 'VOCs', unit: 'ppb', axis: 1, color: '#64748b' }
+  { key: 'co2', label: '二氧化碳 CO₂', unit: 'ppm', axis: 0, color: '#3b82f6' },
+  { key: 'vocs', label: 'VOCs', unit: 'ppb', axis: 1, color: '#cbd5e1' }
 ]
 
 /**
@@ -965,31 +965,38 @@ export default {
       }))
 
       return {
-        tooltip: { trigger: 'axis' },
+        backgroundColor: 'transparent',
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: 'rgba(15, 23, 42, 0.9)',
+          borderColor: 'rgba(34, 211, 238, 0.3)',
+          textStyle: { color: '#e2e8f0', fontSize: 12 }
+        },
         legend: {
           top: 0,
-          textStyle: { color: '#475569', fontSize: 12 }
+          textStyle: { color: '#94a3b8', fontSize: 12 },
+          inactiveColor: '#475569'
         },
-        grid: { left: 40, right: 46, top: 44, bottom: 34 },
+        grid: { left: 40, right: 46, top: 40, bottom: 30, borderColor: 'rgba(148, 163, 184, 0.1)' },
         xAxis: {
           type: 'category',
           data: labels,
-          axisLabel: { color: '#64748b' },
-          axisLine: { lineStyle: { color: '#cbd5e1' } }
+          axisLabel: { color: '#94a3b8' },
+          axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.2)' } }
         },
         yAxis: [
           {
             type: 'value',
             name: 'ppm',
-            nameTextStyle: { color: '#64748b' },
-            axisLabel: { color: '#64748b' },
-            splitLine: { lineStyle: { color: '#e2e8f0' } }
+            nameTextStyle: { color: '#94a3b8' },
+            axisLabel: { color: '#94a3b8' },
+            splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.1)' } }
           },
           {
             type: 'value',
             name: 'ppb',
-            nameTextStyle: { color: '#64748b' },
-            axisLabel: { color: '#64748b' },
+            nameTextStyle: { color: '#94a3b8' },
+            axisLabel: { color: '#94a3b8' },
             splitLine: { show: false }
           }
         ],
@@ -2864,13 +2871,13 @@ export default {
 }
 
 .metric-gauge.metric-ok .gauge-value {
-  color: #22c55e;
+  color: var(--el-color-success);
 }
 
 .gauge-value {
   font-size: 24px;
   font-weight: 800;
-  color: #22d3ee;
+  color: var(--color-primary);
   margin-bottom: 4px;
 }
 
@@ -2895,13 +2902,14 @@ export default {
 
 .gauge-fill {
   height: 100%;
-  background: linear-gradient(90deg, #22d3ee, #a855f7);
+  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
   border-radius: 2px;
-  transition: width 0.5s ease;
+  /* Transition */
+  transition: all 0.3s ease;
 }
 
 .metric-accuracy .gauge-fill {
-  background: linear-gradient(90deg, #22c55e, #22d3ee);
+  background: linear-gradient(90deg, var(--el-color-success), var(--color-primary));
 }
 
 /* 深度学习操作按钮 */
@@ -2924,7 +2932,7 @@ export default {
 .progress-text {
   text-align: center;
   font-size: 12px;
-  color: #22d3ee;
+  color: var(--color-primary);
   margin-top: 8px;
 }
 
@@ -2932,9 +2940,9 @@ export default {
 .dl-train-result {
   margin-top: 12px;
   padding: 12px;
-  background: rgba(30, 41, 59, 0.5);
+  background: var(--el-bg-color-overlay);
   border-radius: 8px;
-  border: 1px solid rgba(71, 85, 105, 0.4);
+  border: 1px solid var(--color-border);
 }
 
 .result-header {
@@ -2954,22 +2962,22 @@ export default {
   padding: 8px 10px;
   background: rgba(15, 23, 42, 0.5);
   border-radius: 6px;
-  border: 1px solid rgba(71, 85, 105, 0.3);
+  border: 1px solid var(--color-border);
 }
 
 .item-label {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 .item-value {
   font-size: 12px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--color-text-main);
 }
 
 .item-value.highlight {
-  color: #22d3ee;
+  color: var(--color-primary);
   font-size: 14px;
 }
 
@@ -2977,13 +2985,13 @@ export default {
 .training-charts {
   margin-top: 14px;
   padding-top: 14px;
-  border-top: 1px solid rgba(71, 85, 105, 0.3);
+  border-top: 1px solid var(--color-border);
 }
 
 .chart-title {
   font-size: 12px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--color-text-main);
   margin-bottom: 10px;
   text-align: center;
 }
@@ -2997,18 +3005,18 @@ export default {
 .decision-panel {
   margin-top: 14px;
   padding: 14px;
-  background: linear-gradient(135deg, rgba(34, 211, 238, 0.08) 0%, rgba(168, 85, 247, 0.08) 100%);
-  border: 1px solid rgba(34, 211, 238, 0.3);
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.05) 0%, rgba(168, 85, 247, 0.05) 100%);
+  border: 1px solid rgba(34, 211, 238, 0.2);
   border-radius: 10px;
 }
 
 .decision-header {
   font-size: 13px;
   font-weight: 700;
-  color: #e2e8f0;
+  color: var(--color-text-main);
   margin-bottom: 12px;
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(71, 85, 105, 0.3);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .decision-content {
@@ -3024,7 +3032,7 @@ export default {
 
 .section-label {
   font-size: 10px;
-  color: #64748b;
+  color: var(--color-text-dim);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   margin-bottom: 6px;
@@ -3039,12 +3047,12 @@ export default {
 .class-label {
   font-size: 18px;
   font-weight: 700;
-  color: #22d3ee;
+  color: var(--color-primary);
 }
 
 .class-confidence {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 /* 科学价值评分 */
@@ -3058,7 +3066,7 @@ export default {
 .score-value {
   font-size: 32px;
   font-weight: 800;
-  background: linear-gradient(135deg, #22d3ee, #a855f7);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -3066,7 +3074,7 @@ export default {
 
 .score-label {
   font-size: 14px;
-  color: #64748b;
+  color: var(--color-text-dim);
 }
 
 /* 雷达图 */

@@ -2,6 +2,7 @@
   <div class="app-shell">
     <!-- 星空背景层 -->
     <div class="starfield">
+      <div class="planet"></div>
       <div class="stars stars-1"></div>
       <div class="stars stars-2"></div>
       <div class="stars stars-3"></div>
@@ -62,7 +63,11 @@
     </nav>
 
     <main class="content">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <transition name="fade" mode="out-in">
+          <component :is="Component" />
+        </transition>
+      </router-view>
     </main>
 
     <footer class="app-footer">
@@ -88,12 +93,12 @@ const activePath = computed(() => route.path)
 .app-shell {
   min-height: 100vh;
   position: relative;
-  background: linear-gradient(135deg, #0a0a1a 0%, #0f172a 25%, #1e1b4b 50%, #0f172a 75%, #0a0a1a 100%);
-  color: #e2e8f0;
+  background: radial-gradient(circle at 50% 0%, #0f172a 0%, #020617 80%, #000 100%);
+  color: var(--color-text-main);
   overflow-x: hidden;
 }
 
-/* 星空背景 */
+/* 星空背景 - Optimization: Use cleaner gradients */
 .starfield {
   position: fixed;
   top: 0;
@@ -102,6 +107,24 @@ const activePath = computed(() => route.path)
   bottom: 0;
   pointer-events: none;
   z-index: 0;
+}
+
+.planet {
+  position: absolute;
+  top: -100px;
+  right: -100px;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle at 30% 30%, rgba(34, 211, 238, 0.15) 0%, rgba(34, 211, 238, 0.05) 40%, transparent 70%);
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: 0.6;
+  animation: planet-pulse 10s ease-in-out infinite;
+}
+
+@keyframes planet-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.1); }
 }
 
 .stars {
@@ -116,9 +139,9 @@ const activePath = computed(() => route.path)
     radial-gradient(1px 1px at 20px 30px, #fff, transparent),
     radial-gradient(1px 1px at 40px 70px, rgba(255,255,255,0.8), transparent),
     radial-gradient(1px 1px at 50px 160px, rgba(255,255,255,0.6), transparent),
-    radial-gradient(1.5px 1.5px at 90px 40px, #22d3ee, transparent),
+    radial-gradient(1.5px 1.5px at 90px 40px, var(--color-primary), transparent),
     radial-gradient(1px 1px at 130px 80px, #fff, transparent),
-    radial-gradient(1.5px 1.5px at 160px 120px, #a855f7, transparent);
+    radial-gradient(1.5px 1.5px at 160px 120px, var(--color-secondary), transparent);
   background-size: 200px 200px;
   animation: twinkle 4s ease-in-out infinite;
 }
@@ -138,13 +161,13 @@ const activePath = computed(() => route.path)
     radial-gradient(1.5px 1.5px at 30px 100px, #c084fc, transparent),
     radial-gradient(1px 1px at 80px 50px, rgba(255,255,255,0.5), transparent),
     radial-gradient(1px 1px at 120px 170px, #fff, transparent),
-    radial-gradient(2px 2px at 170px 20px, #22d3ee, transparent);
+    radial-gradient(2px 2px at 170px 20px, var(--color-primary), transparent);
   background-size: 300px 300px;
   animation: twinkle 6s ease-in-out infinite 2s;
 }
 
 @keyframes twinkle {
-  0%, 100% { opacity: 0.7; }
+  0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
 }
 
@@ -173,7 +196,13 @@ const activePath = computed(() => route.path)
   width: 48px;
   height: 48px;
   flex-shrink: 0;
-  filter: drop-shadow(0 0 12px rgba(34, 211, 238, 0.4));
+  filter: drop-shadow(0 0 12px var(--color-primary-glow));
+  animation: float 6s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
 }
 
 .logo-icon svg {
@@ -184,28 +213,28 @@ const activePath = computed(() => route.path)
 .eyebrow {
   letter-spacing: 0.25em;
   text-transform: uppercase;
-  color: #22d3ee;
+  color: var(--color-primary);
   font-size: 11px;
+  font-family: var(--font-mono);
   margin: 0 0 4px;
-  text-shadow: 0 0 20px rgba(34, 211, 238, 0.5);
+  text-shadow: 0 0 20px var(--color-primary-glow);
 }
 
 .brand h1 {
   margin: 0;
-  font-size: 32px;
+  font-size: 36px;
   font-weight: 800;
-  letter-spacing: 2px;
-  background: linear-gradient(135deg, #22d3ee 0%, #a855f7 50%, #f472b6 100%);
+  letter-spacing: 1px;
+  background: linear-gradient(135deg, #fff 0%, #e2e8f0 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  text-shadow: none;
-  filter: drop-shadow(0 0 30px rgba(168, 85, 247, 0.3));
+  text-shadow: 0 0 30px rgba(255, 255, 255, 0.1);
 }
 
 .subtitle {
   margin: 12px 0 0;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   line-height: 1.6;
   max-width: 760px;
   font-size: 14px;
@@ -220,8 +249,8 @@ const activePath = computed(() => route.path)
   align-items: center;
   padding: 0 40px;
   margin-bottom: 8px;
-  border-bottom: 1px solid rgba(71, 85, 105, 0.3);
-  background: rgba(15, 23, 42, 0.5);
+  border-bottom: 1px solid var(--color-border);
+  background: rgba(15, 23, 42, 0.3);
   backdrop-filter: blur(10px);
 }
 
@@ -234,24 +263,33 @@ const activePath = computed(() => route.path)
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 20px;
-  color: #64748b;
+  padding: 16px 24px;
+  color: var(--color-text-dim);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   transition: all 0.3s ease;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  position: relative;
 }
 
 .nav-item:hover {
-  color: #94a3b8;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .nav-item.active {
-  color: #22d3ee;
-  border-bottom-color: #22d3ee;
-  text-shadow: 0 0 20px rgba(34, 211, 238, 0.5);
+  color: var(--color-primary);
+}
+
+.nav-item.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-primary);
+  box-shadow: 0 0 10px var(--color-primary);
 }
 
 .nav-dot {
@@ -272,19 +310,20 @@ const activePath = computed(() => route.path)
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #22c55e;
+  color: var(--el-color-success);
   font-size: 12px;
+  font-family: var(--font-mono);
   padding: 6px 14px;
   background: rgba(34, 197, 94, 0.1);
   border: 1px solid rgba(34, 197, 94, 0.3);
-  border-radius: 20px;
+  border-radius: 4px;
 }
 
 .status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #22c55e;
+  background: var(--el-color-success);
 }
 
 .status-dot.pulse {
@@ -302,20 +341,20 @@ const activePath = computed(() => route.path)
   }
 }
 
-/* 内容区 */
+/* 内容区 Transition */
 .content {
   position: relative;
   z-index: 10;
-  padding: 20px 28px 40px;
+  padding: 24px 40px 48px;
 }
 
 /* 页脚 */
 .app-footer {
   position: relative;
   z-index: 10;
-  padding: 20px 40px;
-  border-top: 1px solid rgba(71, 85, 105, 0.3);
-  background: rgba(15, 23, 42, 0.5);
+  padding: 24px 40px;
+  border-top: 1px solid var(--color-border);
+  background: rgba(15, 23, 42, 0.8);
   backdrop-filter: blur(10px);
 }
 
@@ -323,13 +362,13 @@ const activePath = computed(() => route.path)
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 8px;
-  color: #64748b;
+  gap: 12px;
+  color: var(--color-text-dim);
   font-size: 12px;
 }
 
 .footer-sep {
-  color: #475569;
+  color: var(--color-border);
 }
 
 @media (max-width: 960px) {
@@ -341,8 +380,7 @@ const activePath = computed(() => route.path)
 
   .nav-bar {
     padding: 0 20px;
-    flex-wrap: wrap;
-    gap: 10px;
+    overflow-x: auto;
   }
 
   .content {
@@ -350,12 +388,7 @@ const activePath = computed(() => route.path)
   }
 
   .brand h1 {
-    font-size: 24px;
-  }
-
-  .top-actions {
-    width: 100%;
-    flex-wrap: wrap;
+    font-size: 28px;
   }
 }
 </style>

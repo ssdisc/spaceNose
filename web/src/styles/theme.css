@@ -1,0 +1,129 @@
+/* Font Import */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+:root {
+  /* Core Palette */
+  --color-bg-deep: #020617;
+  --color-bg-dark: #0f172a;
+  --color-bg-surface: #1e293b;
+  
+  --color-primary: #22d3ee; /* Cyan 400 */
+  --color-primary-glow: rgba(34, 211, 238, 0.4);
+  --color-secondary: #a855f7; /* Purple 500 */
+  --color-secondary-glow: rgba(168, 85, 247, 0.4);
+  
+  --color-text-main: #f8fafc;
+  --color-text-muted: #94a3b8;
+  --color-text-dim: #64748b;
+
+  --color-border: rgba(148, 163, 184, 0.2);
+  --color-border-hover: rgba(34, 211, 238, 0.5);
+
+  /* Element Plus Overrides */
+  --el-color-primary: var(--color-primary);
+  --el-color-success: #22c55e;
+  --el-color-warning: #f59e0b;
+  --el-color-danger: #ef4444;
+  --el-color-info: #64748b;
+  
+  /* Text */
+  --el-text-color-primary: var(--color-text-main);
+  --el-text-color-regular: var(--color-text-main);
+  --el-text-color-secondary: var(--color-text-muted);
+  --el-text-color-placeholder: var(--color-text-dim);
+
+  /* Borders & Backgrounds */
+  --el-border-color: var(--color-border);
+  --el-border-color-light: rgba(148, 163, 184, 0.1);
+  --el-border-color-lighter: rgba(148, 163, 184, 0.05);
+  --el-fill-color-blank: transparent;
+  --el-bg-color: #0f172a;
+  --el-bg-color-overlay: #1e293b;
+
+  /* Font */
+  --font-main: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  font-family: var(--font-main);
+  background-color: var(--color-bg-deep);
+  color: var(--color-text-main);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Glassmorphism Utility */
+.glass {
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.glass:hover {
+  border-color: rgba(34, 211, 238, 0.3);
+  box-shadow: 0 0 15px rgba(34, 211, 238, 0.1);
+}
+
+/* Neon Effects */
+.neon-text {
+  text-shadow: 0 0 10px var(--color-primary-glow);
+}
+
+.neon-border {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 10px var(--color-primary-glow);
+}
+
+/* Element Plus Customization */
+.el-card {
+  --el-card-bg-color: transparent;
+  color: var(--color-text-main);
+  border: none;
+}
+
+.el-button--primary {
+  background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+  border: none;
+  box-shadow: 0 4px 6px -1px rgba(8, 145, 178, 0.4);
+}
+
+.el-button--primary:hover {
+  background: linear-gradient(135deg, #06b6d4 0%, #22d3ee 100%);
+  box-shadow: 0 0 15px rgba(34, 211, 238, 0.6);
+}
+
+.el-input__wrapper, .el-textarea__inner {
+  background-color: rgba(15, 23, 42, 0.6) !important;
+  box-shadow: 0 0 0 1px var(--color-border) inset !important;
+}
+
+.el-input__wrapper:hover, .el-textarea__inner:hover {
+  box-shadow: 0 0 0 1px var(--color-primary) inset !important;
+}
+
+.el-input__wrapper.is-focus, .el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--color-primary) inset !important;
+  box-shadow: 0 0 0 1px var(--color-primary) inset, 0 0 10px var(--color-primary-glow) !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-deep);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
