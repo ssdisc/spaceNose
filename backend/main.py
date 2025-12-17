@@ -28,6 +28,14 @@ for static_dir in static_dirs:
     if os.path.exists(path) and os.path.isdir(path):
         app.mount(f"/{static_dir}", StaticFiles(directory=path), name=static_dir)
 
+# favicon.ico 路由
+@app.get("/favicon.ico")
+async def favicon():
+    favicon_path = os.path.join(static_folder, "favicon.ico")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path, media_type="image/x-icon")
+    return FileResponse(status_code=404)
+
 # WebSocket连接管理
 class ConnectionManager:
     def __init__(self):
