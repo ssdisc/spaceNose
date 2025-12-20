@@ -330,3 +330,184 @@ uint16_t ESP8266_ReceiveTCP(char* buffer, uint16_t buffer_size) {
 
     return len;
 }
+
+/**
+ * @brief 从TCP连接接收数据（非阻塞，二进制安全）
+ *
+ * 解析普通模式下 ESP8266 的 +IPD 前缀：
+ * - 单连接：+IPD,<len>:<data>
+ * - 多连接：+IPD,<id>,<len>:<data>
+ *
+ * 本函数会在内部缓存一个完整的 <data>，缓存完成后一次性返回给调用者。
+ */
+uint16_t ESP8266_ReceiveTCPBytes(uint8_t* buffer, uint16_t buffer_size) {
+    if (buffer == NULL || buffer_size == 0) {
+        return 0;
+    }
+
+    /* 解析状态机 */
+    typedef enum {
+        IPD_SYNC = 0,
+        IPD_MATCH,      /* 匹配 "+IPD," */
+        IPD_READ_NUM,   /* 读取 <len> 或 <id> */
+        IPD_READ_LEN,   /* 读取真正的 <len>（用于多连接格式） */
+        IPD_READ_DATA,
+        IPD_DISCARD,
+    } ipd_state_t;
+
+    static ipd_state_t state = IPD_SYNC;
+    static uint8_t match_idx = 0;
+    static uint16_t num = 0;
+    static uint16_t ipd_len = 0;
+    static uint16_t data_pos = 0;
+    static uint16_t discard_left = 0;
+    static uint8_t payload[512];
+
+    const uint8_t pattern[] = {'+', 'I', 'P', 'D', ','};
+
+    /* 若已有完整payload，则直接输出 */
+    if (state == IPD_READ_DATA && ipd_len > 0 && data_pos == ipd_len) {
+        uint16_t out_len = (ipd_len <= buffer_size) ? ipd_len : buffer_size;
+        memcpy(buffer, payload, out_len);
+        /* 重置以继续解析后续帧 */
+        state = IPD_SYNC;
+        match_idx = 0;
+        num = 0;
+        ipd_len = 0;
+        data_pos = 0;
+        discard_left = 0;
+        return out_len;
+    }
+
+    while (rx_buffer.tail != rx_buffer.head) {
+        uint8_t b = rx_buffer.buffer[rx_buffer.tail];
+        rx_buffer.tail = (rx_buffer.tail + 1) % ESP8266_RX_BUFFER_SIZE;
+
+        if (state == IPD_SYNC) {
+            if (b == '+') {
+                state = IPD_MATCH;
+                match_idx = 1;
+            }
+            continue;
+        }
+
+        if (state == IPD_MATCH) {
+            if (b == pattern[match_idx]) {
+                match_idx++;
+                if (match_idx >= sizeof(pattern)) {
+                    state = IPD_READ_NUM;
+                    num = 0;
+                }
+            } else {
+                /* 失配：若当前字节又是 '+'，则从头重新匹配 */
+                if (b == '+') {
+                    match_idx = 1;
+                } else {
+                    state = IPD_SYNC;
+                    match_idx = 0;
+                }
+            }
+            continue;
+        }
+
+        if (state == IPD_READ_NUM) {
+            if (b >= '0' && b <= '9') {
+                num = (uint16_t)(num * 10 + (uint16_t)(b - '0'));
+                continue;
+            }
+            if (b == ':') {
+                /* 单连接格式：num 即 len */
+                ipd_len = num;
+                data_pos = 0;
+                if (ipd_len == 0) {
+                    /* 空帧：直接重置并继续同步 */
+                    state = IPD_SYNC;
+                    match_idx = 0;
+                    num = 0;
+                    continue;
+                }
+                if (ipd_len > sizeof(payload)) {
+                    discard_left = ipd_len;
+                    state = IPD_DISCARD;
+                } else {
+                    state = IPD_READ_DATA;
+                }
+                continue;
+            }
+            if (b == ',') {
+                /* 多连接格式：刚读到的是 link id，接下来再读 len */
+                num = 0;
+                state = IPD_READ_LEN;
+                continue;
+            }
+            /* 其他字符：重置 */
+            state = IPD_SYNC;
+            match_idx = 0;
+            num = 0;
+            continue;
+        }
+
+        if (state == IPD_READ_LEN) {
+            if (b >= '0' && b <= '9') {
+                num = (uint16_t)(num * 10 + (uint16_t)(b - '0'));
+                continue;
+            }
+            if (b == ':') {
+                ipd_len = num;
+                data_pos = 0;
+                if (ipd_len == 0) {
+                    state = IPD_SYNC;
+                    match_idx = 0;
+                    num = 0;
+                    continue;
+                }
+                if (ipd_len > sizeof(payload)) {
+                    discard_left = ipd_len;
+                    state = IPD_DISCARD;
+                } else {
+                    state = IPD_READ_DATA;
+                }
+                continue;
+            }
+            state = IPD_SYNC;
+            match_idx = 0;
+            num = 0;
+            continue;
+        }
+
+        if (state == IPD_READ_DATA) {
+            if (data_pos < sizeof(payload)) {
+                payload[data_pos++] = b;
+            }
+            if (data_pos >= ipd_len) {
+                /* 一帧 data 完整到齐：立即输出（一次只返回一帧） */
+                uint16_t out_len = (ipd_len <= buffer_size) ? ipd_len : buffer_size;
+                memcpy(buffer, payload, out_len);
+                state = IPD_SYNC;
+                match_idx = 0;
+                num = 0;
+                ipd_len = 0;
+                data_pos = 0;
+                discard_left = 0;
+                return out_len;
+            }
+            continue;
+        }
+
+        if (state == IPD_DISCARD) {
+            if (discard_left > 0) {
+                discard_left--;
+            }
+            if (discard_left == 0) {
+                state = IPD_SYNC;
+                match_idx = 0;
+                num = 0;
+                ipd_len = 0;
+                data_pos = 0;
+            }
+            continue;
+        }
+    }
+
+    return 0;
+}

@@ -111,4 +111,13 @@ uint8_t ESP8266_HasPendingData(void);
  */
 uint16_t ESP8266_ReceiveTCP(char* buffer, uint16_t buffer_size);
 
+/**
+ * @brief 从TCP连接接收数据（非阻塞，二进制安全）
+ * @param buffer 用于存放实际 TCP payload 的缓冲区（不做\\0结尾）
+ * @param buffer_size 缓冲区大小
+ * @return 读取到的 payload 字节数（若未凑齐一个 +IPD 帧则返回 0）
+ * @note  解析 ESP8266 普通模式的 +IPD 前缀：+IPD,<len>:<data>（兼容 +IPD,<id>,<len>:<data>）。
+ */
+uint16_t ESP8266_ReceiveTCPBytes(uint8_t* buffer, uint16_t buffer_size);
+
 #endif /* __ESP8266_DRIVER_H */

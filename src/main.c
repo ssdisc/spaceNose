@@ -13,6 +13,7 @@
 #include <string.h>
 #include "esp8266_driver.h"   // 引入新的ESP8266驱动
 #include "sensor_manager.h"   // 引入传感器管理模块
+#include "pus_link.h"         // ECSS PUS（最小子集）
 
 /* WiFi/服务器配置 - 请根据实际环境修改 */
 static const char* WIFI_SSID = "MCVC05LC";       // 笔记本热点名称
@@ -24,6 +25,12 @@ static const uint16_t SERVER_PORT = 8888;        // TCP服务器端口
 static volatile uint32_t g_sampling_interval_ms = 5000;  // 动态采样间隔（毫秒）
 #define MIN_SAMPLING_INTERVAL_MS  100    // 最小采样间隔
 #define MAX_SAMPLING_INTERVAL_MS  60000  // 最大采样间隔
+
+/* 气体检测阈值与采样率配置（可按实验调整） */
+#define HIGH_SAMPLE_RATE_MS         1000
+#define NORMAL_SAMPLE_RATE_MS       5000
+#define ALCOHOL_ALERT_PPM           150.0f
+#define ALCOHOL_CLEAR_PPM           120.0f
 
 /* Private variables */
 UART_HandleTypeDef huart1;  // 调试串口
@@ -89,6 +96,11 @@ int main(void)
     /* 步骤7: 初始化ESP8266驱动 (关键改动) */
     ESP8266_Init();
 
+    /* 步骤8: 初始化 ECSS PUS（传输层使用 TCP；后续可替换为 LoRa） */
+    PusLink_Init(ESP8266_SendTCP, 0x001, 0x01, 0x00);
+    PusLink_SetConnected(0);
+    PusLink_SetCommandHandler(ParseBackendCommand);
+
     /* 等待串口稳定 */
     HAL_Delay(1000);
     
@@ -142,17 +154,19 @@ int main(void)
     printf("========================================\r\n\r\n");
 
     uint32_t counter = 0;
+    uint8_t last_tcp_enabled = 0;
+    SensorStatus_t last_mq3_status = SENSOR_STATUS_NOT_READY;
+    uint8_t gas_alert_active = 0;
 
     /* 主循环 */
     while (1)
     {
-        /* 检查后端下发的指令（非阻塞） */
+        /* 检查后端下发的指令（非阻塞，PUS Telecommand） */
         if (tcp_enabled && ESP8266_HasPendingData()) {
-            char cmd_buf[256] = {0};
-            uint16_t cmd_len = ESP8266_ReceiveTCP(cmd_buf, sizeof(cmd_buf));
-            if (cmd_len > 0) {
-                printf("[指令接收] %s\r\n", cmd_buf);
-                ParseBackendCommand(cmd_buf);
+            uint8_t rx[512] = {0};
+            uint16_t rx_len = ESP8266_ReceiveTCPBytes(rx, sizeof(rx));
+            if (rx_len > 0) {
+                PusLink_FeedBytes(rx, rx_len);
             }
         }
 
@@ -178,6 +192,12 @@ int main(void)
         {
             /* 已连通时刷新时间戳，避免累积突发检查 */
             last_network_check = now;
+        }
+
+        /* TCP连通状态变化：用于触发队列重发 */
+        if (tcp_enabled != last_tcp_enabled) {
+            PusLink_SetConnected(tcp_enabled);
+            last_tcp_enabled = tcp_enabled;
         }
 
         /* LED闪烁 */
@@ -212,32 +232,71 @@ int main(void)
         }
         printf("============================\r\n\r\n");
 
-        /* 如果TCP已连接，发送数据到服务器 */
-        if (tcp_enabled && mq3_data != NULL)
+        /* 发送数据到地面：使用 ECSS PUS 协议（支持断链缓存+优先级） */
+        if (mq3_data != NULL)
         {
-            // 构建JSON格式的数据（扩展字段）
-            char json_data[256] = {0};
-            sprintf(json_data,
-                    "{\"counter\":%lu,"
-                    "\"adc\":%u,"
-                    "\"voltage\":%.3f,"
-                    "\"mq3_adc\":%u,"
-                    "\"mq3_voltage\":%.3f,"
-                    "\"alcohol_ppm\":%.2f,"
-                    "\"sensor_status\":%d}\n",
-                    counter - 1,
-                    mq3_data->adc_raw,
-                    mq3_data->voltage,
-                    mq3_data->adc_raw,        // mq3_adc (添加)
-                    mq3_data->voltage,        // mq3_voltage (添加)
-                    mq3_data->concentration,  // alcohol_ppm
-                    mq3_data->status);        // sensor_status
+            /* ========== 事件下传：状态变化/阈值触发（示例） ========== */
+            if (mq3_data->status != last_mq3_status) {
+                char evt_payload[128] = {0};
+                snprintf(evt_payload, sizeof(evt_payload),
+                         "{\"kind\":\"status\",\"sensor\":\"mq3\",\"status\":%d}",
+                         (int)mq3_data->status);
+                PusLink_QueueEvent(PUS5_EVENT_LOW, evt_payload, 1);
+                last_mq3_status = mq3_data->status;
+            }
 
-            // 通过TCP发送
-            if (!ESP8266_SendTCP((uint8_t*)json_data, strlen(json_data)))
-            {
-                printf("   [警告] TCP发送失败\r\n");
-                tcp_enabled = 0; // 触发下次循环重连
+            if (mq3_data->status == SENSOR_STATUS_OK) {
+                if (!gas_alert_active && mq3_data->concentration >= ALCOHOL_ALERT_PPM) {
+                    gas_alert_active = 1;
+                    g_sampling_interval_ms = HIGH_SAMPLE_RATE_MS;
+                    char evt_payload[160] = {0};
+                    snprintf(evt_payload, sizeof(evt_payload),
+                             "{\"kind\":\"gas_alert\",\"metric\":\"alcohol_ppm\",\"value\":%.2f,"
+                             "\"action\":\"high_sample\",\"rate_ms\":%lu}",
+                             mq3_data->concentration,
+                             (unsigned long)g_sampling_interval_ms);
+                    PusLink_QueueEvent(PUS5_EVENT_HIGH, evt_payload, 1);
+                } else if (gas_alert_active && mq3_data->concentration <= ALCOHOL_CLEAR_PPM) {
+                    gas_alert_active = 0;
+                    g_sampling_interval_ms = NORMAL_SAMPLE_RATE_MS;
+                    char evt_payload[160] = {0};
+                    snprintf(evt_payload, sizeof(evt_payload),
+                             "{\"kind\":\"gas_clear\",\"metric\":\"alcohol_ppm\",\"value\":%.2f,"
+                             "\"action\":\"normal\",\"rate_ms\":%lu}",
+                             mq3_data->concentration,
+                             (unsigned long)g_sampling_interval_ms);
+                    PusLink_QueueEvent(PUS5_EVENT_MEDIUM, evt_payload, 1);
+                }
+            } else {
+                gas_alert_active = 0;
+            }
+
+            char payload[192] = {0};
+            snprintf(payload,
+                     sizeof(payload),
+                     "{\"counter\":%lu,"
+                     "\"adc\":%u,"
+                     "\"voltage\":%.3f,"
+                     "\"mq3_adc\":%u,"
+                     "\"mq3_voltage\":%.3f,"
+                     "\"alcohol_ppm\":%.2f,"
+                     "\"sensor_status\":%d}",
+                     counter - 1,
+                     mq3_data->adc_raw,
+                     mq3_data->voltage,
+                     mq3_data->adc_raw,        // mq3_adc
+                     mq3_data->voltage,        // mq3_voltage
+                     mq3_data->concentration,  // alcohol_ppm
+                     mq3_data->status);        // sensor_status
+
+            /* 遥测：Housekeeping（不要求 ACK）；断链期间会在队列内缓存，连通后补发 */
+            PusLink_QueueHousekeeping(payload);
+
+            /* 队列发送：若发送失败，触发上层重连 */
+            if (!PusLink_Poll()) {
+                printf("   [警告] PUS发送失败，触发重连\r\n");
+                tcp_enabled = 0;
+                PusLink_SetConnected(0);
             }
         }
 

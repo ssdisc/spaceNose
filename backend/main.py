@@ -4,16 +4,34 @@ from fastapi.responses import FileResponse
 import os
 import asyncio
 import json
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict
+import base64
+from datetime import datetime
+from typing import List, Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
 
 # 导入数据库相关模块
 from database import init_db, get_db, SessionLocal, SensorDataCRUD
-from models import SensorData
 from config import settings
 from ml_api import router as ml_router
 from ml_service import ml_service
+from pus import (
+    DEFAULT_APID,
+    PUS1_ACCEPTANCE_FAILURE,
+    PUS1_ACCEPTANCE_SUCCESS,
+    PUS1_COMPLETION_FAILURE,
+    PUS1_COMPLETION_SUCCESS,
+    PUS3_HK_REPORT,
+    PUS_SERVICE_EVENT_REPORTING,
+    PUS_SERVICE_HOUSEKEEPING,
+    PUS_SERVICE_TC_VERIFICATION,
+    make_tc_set_rate,
+    make_tc_tm_ack,
+    parse_primary_header,
+    parse_pus_packet,
+    looks_like_primary_header,
+    unpack_tc_verification_user_data,
+ )
 
 app = FastAPI()
 app.include_router(ml_router)
@@ -68,6 +86,15 @@ TCP_PORT = settings.TCP_PORT
 # ==================== 自适应采样控制 ====================
 # 活跃的TCP连接（硬件设备）
 active_tcp_writers: Dict[str, asyncio.StreamWriter] = {}
+# 设备是否支持 ECSS PUS（收到过合法 PUS 包即视为支持）
+device_supports_pus: Dict[str, bool] = {}
+# 下行 PUS Telecommand 等待 Verification（Service 1）
+pending_downlink_pus_tcs: Dict[str, Dict[Tuple[int, int], Dict[str, Any]]] = {}
+_downlink_tc_seq: int = 1
+
+# 事件下传缓存（地面侧最近事件，便于调试/展示；不入库）
+MAX_EVENTS_PER_DEVICE = 200
+recent_link_events: Dict[str, List[Dict[str, Any]]] = {}
 # 当前采样率（毫秒）
 current_sampling_rate_ms = 5000
 # 高采样模式的采样率
@@ -78,12 +105,27 @@ NORMAL_SAMPLE_RATE_MS = 5000
 last_decision_state: Dict[str, str] = {}
 
 async def send_sampling_rate_to_device(writer: asyncio.StreamWriter, rate_ms: int, peer_ip: str = "unknown"):
-    """向硬件发送采样率指令"""
+    """向硬件发送采样率指令（ECSS PUS 协议）"""
     try:
-        cmd = json.dumps({"cmd": "set_rate", "rate_ms": rate_ms}) + "\n"
-        writer.write(cmd.encode())
+        global _downlink_tc_seq
+        seq_count = _downlink_tc_seq & 0x3FFF
+        _downlink_tc_seq = (seq_count + 1) & 0x3FFF
+
+        pkt = make_tc_set_rate(rate_ms=int(rate_ms), apid=DEFAULT_APID, seq_count=seq_count)
+        primary = parse_primary_header(pkt[:6])
+        tc_packet_id = (1 << 12) | (1 << 11) | (primary.apid & 0x07FF)
+        tc_seq_ctrl = ((primary.seq_flags & 0x3) << 14) | (primary.seq_count & 0x3FFF)
+
+        pending_downlink_pus_tcs.setdefault(peer_ip, {})[(tc_packet_id, tc_seq_ctrl)] = {
+            "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "cmd": "set_rate",
+            "rate_ms": int(rate_ms),
+            "accepted": False,
+        }
+
+        writer.write(pkt)
         await writer.drain()
-        print(f"✓ 向设备 {peer_ip} 发送采样率指令: {rate_ms}ms")
+        print(f"✓(PUS) 向设备 {peer_ip} 发送采样率指令: {rate_ms}ms seq={seq_count}")
         return True
     except Exception as e:
         print(f"⚠ 发送采样率指令失败 {peer_ip}: {e}")
@@ -126,8 +168,172 @@ latest_data = {
     "timestamp": ""
 }
 
+def _now_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _record_pus_event(peer_id: str, pkt, payload: Any) -> None:
+    evt = {
+        "peer_id": peer_id,
+        "received_at": _now_str(),
+        "apid": getattr(pkt.primary, "apid", None),
+        "seq": getattr(pkt.primary, "seq_count", None),
+        "svc": getattr(pkt, "service_type", None),
+        "sub": getattr(pkt, "service_subtype", None),
+        "payload": payload,
+    }
+    bucket = recent_link_events.setdefault(peer_id, [])
+    bucket.append(evt)
+    if len(bucket) > MAX_EVENTS_PER_DEVICE:
+        del bucket[0: max(0, len(bucket) - MAX_EVENTS_PER_DEVICE)]
+
+
+def _tm_packet_id_and_seq_ctrl(apid: int, seq_flags: int, seq_count: int) -> Tuple[int, int]:
+    packet_id = (0 << 13) | (0 << 12) | (1 << 11) | (apid & 0x07FF)
+    seq_ctrl = ((seq_flags & 0x3) << 14) | (seq_count & 0x3FFF)
+    return packet_id, seq_ctrl
+
+
+def _tc_packet_id_and_seq_ctrl(apid: int, seq_flags: int, seq_count: int) -> Tuple[int, int]:
+    packet_id = (0 << 13) | (1 << 12) | (1 << 11) | (apid & 0x07FF)
+    seq_ctrl = ((seq_flags & 0x3) << 14) | (seq_count & 0x3FFF)
+    return packet_id, seq_ctrl
+
+
+def _alloc_tc_seq_count() -> int:
+    global _downlink_tc_seq
+    seq_count = _downlink_tc_seq & 0x3FFF
+    _downlink_tc_seq = (seq_count + 1) & 0x3FFF
+    return seq_count
+
+
+async def _handle_pus_packet(
+    peer_id: str, packet: bytes, writer: Optional[asyncio.StreamWriter]
+) -> Optional[bytes]:
+    global _downlink_tc_seq
+
+    try:
+        pkt = parse_pus_packet(packet)
+    except Exception as e:
+        print(f"✗ PUS解析失败 {peer_id}: {e}")
+        return None
+
+    device_supports_pus[peer_id] = True
+
+    # TM: Telemetry
+    if pkt.is_tm:
+        # Service 1: TC Verification
+        if pkt.service_type == PUS_SERVICE_TC_VERIFICATION:
+            ref = unpack_tc_verification_user_data(pkt.user_data)
+            if ref is None:
+                return None
+            tc_key = ref  # (packet_id, seq_ctrl)
+            pending = pending_downlink_pus_tcs.get(peer_id, {})
+            if tc_key not in pending:
+                return None
+
+            if pkt.service_subtype in (PUS1_ACCEPTANCE_SUCCESS, PUS1_ACCEPTANCE_FAILURE):
+                pending[tc_key]["accepted"] = pkt.service_subtype == PUS1_ACCEPTANCE_SUCCESS
+                pending[tc_key]["accepted_at"] = _now_str()
+                print(f"✓(PUS) TC验收回报: {peer_id} key={tc_key} ok={pending[tc_key]['accepted']}")
+                return None
+
+            if pkt.service_subtype in (PUS1_COMPLETION_SUCCESS, PUS1_COMPLETION_FAILURE):
+                ok = pkt.service_subtype == PUS1_COMPLETION_SUCCESS
+                pending.pop(tc_key, None)
+                print(f"✓(PUS) TC完成回报: {peer_id} key={tc_key} ok={ok}")
+                return None
+
+            return None
+
+        # Service 5: Event reporting（事件下传）
+        if pkt.service_type == PUS_SERVICE_EVENT_REPORTING:
+            try:
+                payload = json.loads(pkt.user_data.decode("utf-8"))
+            except Exception:
+                payload = {"raw": pkt.user_data.decode("utf-8", errors="replace")}
+
+            _record_pus_event(peer_id, pkt, payload)
+            print(f"✓(PUS) 收到事件: {peer_id} seq={pkt.primary.seq_count} payload={payload}")
+
+            # 事件可靠下传：收到事件后回 TM-ACK（任务自定义服务 129/2）
+            seq_count = _alloc_tc_seq_count()
+            tm_pid, tm_sc = _tm_packet_id_and_seq_ctrl(pkt.primary.apid, pkt.primary.seq_flags, pkt.primary.seq_count)
+            ack_tc = make_tc_tm_ack(
+                tm_packet_id=tm_pid,
+                tm_seq_ctrl=tm_sc,
+                apid=DEFAULT_APID,
+                seq_count=seq_count,
+            )
+            if writer is not None:
+                writer.write(ack_tc)
+                await writer.drain()
+                return None
+            return ack_tc
+
+        # Service 3: Housekeeping（周期遥测）
+        if pkt.service_type == PUS_SERVICE_HOUSEKEEPING and pkt.service_subtype == PUS3_HK_REPORT:
+            try:
+                payload = json.loads(pkt.user_data.decode("utf-8"))
+            except Exception:
+                payload = {}
+            if isinstance(payload, dict):
+                payload["_link"] = {"pus": {"apid": pkt.primary.apid, "seq": pkt.primary.seq_count, "svc": pkt.service_type, "sub": pkt.service_subtype}}
+                await _process_sensor_sample(peer_id, payload)
+            return None
+
+        return None
+
+    # TC: Telecommand（通常不会从设备上行收到）
+    return None
+
+
+async def _process_sensor_sample(peer_ip: str, sensor_data: Dict[str, Any]) -> None:
+    sensor_data["timestamp"] = _now_str()
+    sensor_data["co2_ppm"] = sensor_data.get("co2_ppm")
+    sensor_data = ml_service.enrich_realtime_payload(sensor_data)
+
+    global latest_data
+    latest_data = sensor_data
+
+    print(f"✓ 收到数据: {sensor_data}")
+
+    # ========== 自适应采样：根据ML决策自动调整采样率 ==========
+    ml_result = sensor_data.get("ml", {})
+    decision_info = ml_result.get("decision", {})
+    decision_action = decision_info.get("action", "normal")
+
+    # 只在决策状态变化时发送指令（避免重复发送）
+    if decision_action != last_decision_state.get(peer_ip):
+        if decision_action == "high_sample":
+            await trigger_high_sampling(peer_ip)
+        elif decision_action in ("compress", "normal") and last_decision_state.get(peer_ip) == "high_sample":
+            await restore_normal_sampling(peer_ip)
+        last_decision_state[peer_ip] = decision_action
+
+    try:
+        db = SessionLocal()
+        SensorDataCRUD.create(
+            db=db,
+            counter=sensor_data.get("counter", 0),
+            adc=sensor_data.get("adc", 0),
+            voltage=sensor_data.get("voltage", 0.0),
+            mq3_adc=sensor_data.get("mq3_adc"),
+            mq3_voltage=sensor_data.get("mq3_voltage"),
+            alcohol_ppm=sensor_data.get("alcohol_ppm"),
+            co2_ppm=sensor_data.get("co2_ppm"),
+            sensor_status=sensor_data.get("sensor_status"),
+            source_ip=peer_ip,
+        )
+        db.close()
+    except Exception as db_error:
+        print(f"⚠ 数据库保存失败: {db_error}")
+
+    await manager.broadcast(json.dumps(sensor_data))
+
+
 async def handle_tcp_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-    """处理单个TCP客户端，按行解析JSON，支持双向通信"""
+    """处理单个TCP客户端（ECSS PUS 二进制协议）"""
     addr = writer.get_extra_info("peername")
     peer_ip = addr[0] if addr else "unknown"
     print(f"✓ TCP客户端连接: {peer_ip}")
@@ -136,63 +342,37 @@ async def handle_tcp_client(reader: asyncio.StreamReader, writer: asyncio.Stream
     active_tcp_writers[peer_ip] = writer
     last_decision_state[peer_ip] = "normal"
 
+    rx_buf = bytearray()
     try:
         while True:
-            data = await reader.readline()
+            data = await reader.read(1024)
             if not data:
                 break
 
-            try:
-                json_str = data.decode("utf-8").strip()
-                if not json_str:
+            rx_buf.extend(data)
+
+            while True:
+                # 解析 PUS 包（必须满足：primary header 合法 + secondary header PUS version 匹配）
+                if len(rx_buf) >= 13 and looks_like_primary_header(rx_buf[:6]) and ((rx_buf[6] >> 4) & 0xF) == 2:
+                    try:
+                        primary = parse_primary_header(rx_buf[:6])
+                        total_len = primary.total_len
+                    except Exception:
+                        break
+
+                    if len(rx_buf) < total_len:
+                        break
+
+                    packet = bytes(rx_buf[:total_len])
+                    del rx_buf[:total_len]
+                    await _handle_pus_packet(peer_ip, packet, writer)
                     continue
-                sensor_data = json.loads(json_str)
-                sensor_data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                sensor_data["co2_ppm"] = sensor_data.get("co2_ppm")
-                sensor_data = ml_service.enrich_realtime_payload(sensor_data)
 
-                global latest_data
-                latest_data = sensor_data
-
-                print(f"✓ 收到数据: {sensor_data}")
-
-                # ========== 自适应采样：根据ML决策自动调整采样率 ==========
-                ml_result = sensor_data.get("ml", {})
-                decision_info = ml_result.get("decision", {})
-                decision_action = decision_info.get("action", "normal")
-
-                # 只在决策状态变化时发送指令（避免重复发送）
-                if decision_action != last_decision_state.get(peer_ip):
-                    if decision_action == "high_sample":
-                        await trigger_high_sampling(peer_ip)
-                    elif decision_action in ("compress", "normal") and last_decision_state.get(peer_ip) == "high_sample":
-                        await restore_normal_sampling(peer_ip)
-                    last_decision_state[peer_ip] = decision_action
-
-                try:
-                    db = SessionLocal()
-                    SensorDataCRUD.create(
-                        db=db,
-                        counter=sensor_data.get("counter", 0),
-                        adc=sensor_data.get("adc", 0),
-                        voltage=sensor_data.get("voltage", 0.0),
-                        mq3_adc=sensor_data.get("mq3_adc"),
-                        mq3_voltage=sensor_data.get("mq3_voltage"),
-                        alcohol_ppm=sensor_data.get("alcohol_ppm"),
-                        co2_ppm=sensor_data.get("co2_ppm"),
-                        sensor_status=sensor_data.get("sensor_status"),
-                        source_ip=peer_ip,
-                    )
-                    db.close()
-                except Exception as db_error:
-                    print(f"⚠ 数据库保存失败: {db_error}")
-
-                await manager.broadcast(json.dumps(sensor_data))
-
-            except json.JSONDecodeError as e:
-                print(f"✗ JSON解析失败: {e}, 原始数据: {data}")
-            except Exception as e:
-                print(f"✗ 处理数据失败: {e}")
+                # 防御：异常情况下避免缓冲区无限增长
+                if len(rx_buf) > 8192:
+                    print(f"⚠ RX缓冲区过大({len(rx_buf)})，丢弃部分数据: {peer_ip}")
+                    del rx_buf[: len(rx_buf) - 1024]
+                break
     except asyncio.CancelledError:
         pass
     finally:
@@ -212,6 +392,94 @@ async def tcp_server():
     print(f"✓ TCP服务器启动在 {TCP_HOST}:{TCP_PORT}")
     async with server:
         await server.serve_forever()
+
+
+class PusIngestIn(BaseModel):
+    peer_id: str = Field(..., min_length=1, description="设备标识，例如 192.168.1.10 或 lora:dev1")
+    packet_b64: str = Field(..., min_length=1, description="原始 PUS 包（二进制）base64 编码")
+
+
+@app.post("/api/pus/ingest")
+async def ingest_pus_packet(body: PusIngestIn):
+    """
+    PUS 网关入口（适用于 LoRa/串口网关转发）
+
+    网关将收到的二进制 PUS 包 base64 编码后通过 HTTP 转发到此接口；若需要回包（例如事件 TM-ACK），
+    会在响应中返回 `ack_packet_b64`，网关再通过原链路回传给设备。
+    """
+    try:
+        packet = base64.b64decode(body.packet_b64, validate=True)
+    except Exception as e:
+        return {"success": False, "error": f"base64 解码失败: {e}"}
+
+    ack = await _handle_pus_packet(body.peer_id, packet, writer=None)
+    return {
+        "success": True,
+        "ack_packet_b64": base64.b64encode(ack).decode("ascii") if ack else None,
+    }
+
+
+class PusSetRateIn(BaseModel):
+    peer_id: str = Field(..., min_length=1, description="目标设备标识（TCP设备用IP；LoRa可用自定义ID）")
+    rate_ms: int = Field(..., ge=100, le=60000, description="采样率（毫秒）")
+    send_if_connected: bool = Field(default=True, description="若目标为TCP直连设备，是否直接下发（默认True）")
+
+
+@app.post("/api/pus/set_rate")
+async def pus_set_rate(body: PusSetRateIn):
+    """
+    生成/下发 PUS Telecommand（任务自定义服务 129/1）：设置采样率。
+
+    - TCP直连且设备已表现出 PUS 能力：可直接下发
+    - LoRa网关：可取回 `packet_b64` 并通过 LoRa 发射；设备回包可走 `/api/pus/ingest`
+    """
+    seq_count = _alloc_tc_seq_count()
+    pkt = make_tc_set_rate(rate_ms=int(body.rate_ms), apid=DEFAULT_APID, seq_count=seq_count)
+    primary = parse_primary_header(pkt[:6])
+    tc_pid, tc_sc = _tc_packet_id_and_seq_ctrl(primary.apid, primary.seq_flags, primary.seq_count)
+
+    pending_downlink_pus_tcs.setdefault(body.peer_id, {})[(tc_pid, tc_sc)] = {
+        "sent_at": _now_str(),
+        "cmd": "set_rate",
+        "rate_ms": int(body.rate_ms),
+        "accepted": False,
+    }
+
+    sent = False
+    if body.send_if_connected and body.peer_id in active_tcp_writers and device_supports_pus.get(body.peer_id):
+        writer = active_tcp_writers[body.peer_id]
+        try:
+            writer.write(pkt)
+            await writer.drain()
+            sent = True
+        except Exception as e:
+            return {"success": False, "error": f"TCP下发失败: {e}"}
+
+    return {
+        "success": True,
+        "seq": seq_count,
+        "packet_b64": base64.b64encode(pkt).decode("ascii"),
+        "sent": sent,
+        "tc_key": f"{tc_pid:04X}:{tc_sc:04X}",
+    }
+
+
+@app.get("/api/pus/events")
+async def get_pus_events(
+    peer_id: Optional[str] = Query(default=None, description="过滤指定设备（可选）"),
+    limit: int = Query(default=50, ge=1, le=500, description="返回条数"),
+):
+    """获取最近 PUS 事件下传记录（内存缓存，用于调试链路）"""
+    if peer_id:
+        events = list(recent_link_events.get(peer_id, []))
+    else:
+        events = []
+        for _, bucket in recent_link_events.items():
+            events.extend(bucket)
+        events.sort(key=lambda x: x.get("received_at") or "", reverse=True)
+
+    return {"success": True, "count": min(len(events), limit), "data": events[:limit]}
+
 
 @app.on_event("startup")
 async def startup_event():

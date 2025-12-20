@@ -19,14 +19,15 @@
 |  (数据采集)     |              |  (数据转发)   |                |  (TCP/WebSocket/ML)|                |  (实时可视化)
 ```
 
-1.  **硬件传感器层 (STM32)**: 使用 `STM32F407ZGT6` 微控制器采集模拟传感器数据，将其处理并封装成JSON格式。
-2.  **无线通信层 (ESP8266)**: STM32通过 `UART` 串口将JSON数据发送给 `ESP8266` WiFi模块。
+1.  **硬件传感器层 (STM32)**: 使用 `STM32F407ZGT6` 微控制器采集模拟传感器数据，将其封装为 **PUS Telemetry**（User Data 采用JSON，便于联调）。
+2.  **无线通信层 (ESP8266)**: STM32通过 `UART` 控制 `ESP8266`，并通过 `WiFi/TCP` 发送/接收 **二进制 PUS 包**。
 3.  **网络中继层 (电脑WiFi热点)**: ESP8266作为TCP客户端，连接到电脑创建的WiFi热点，并将数据包发送到指定IP和端口。
 4.  **后端服务层 (FastAPI)**: 运行在电脑上的 `FastAPI` 服务器。
     *   **TCP服务器** 监听指定端口，接收来自ESP8266的数据。
     *   **WebSocket服务器** 将处理后的数据（加入时间戳）实时广播给所有连接的前端客户端。
     *   **HTTP服务器** 提供前端Vue应用的静态文件访问。
     *   **ML服务** 提供气体分类、异常检测和智能决策功能。
+    *   **ECSS PUS（星地应用层协议）**: 见 `docs/PUS_PROFILE.md`、`docs/PUS_RUNBOOK.md`；网关接口：`/api/pus/ingest`、`/api/pus/set_rate`、`/api/pus/events`。
 5.  **前端展示层 (Vue.js)**: 浏览器中的Web应用。
     *   通过 `WebSocket` 实时接收后端推送的数据。
     *   使用 `Canvas` 绘制实时数据曲线图，并以卡片和日志形式展示数据。
@@ -37,7 +38,7 @@
 
 ### 嵌入式端 (STM32)
 - **实时采集**: 每秒采集一次ADC数据并转换为电压值。
-- **数据封装**: 将数据打包成 `{"counter":N, "adc":X, "voltage":Y}` JSON格式。
+- **数据封装**: 上行使用 **PUS TM(3/25)**；User Data 为JSON（如 `{"counter":N,"adc":X,"voltage":Y}`）。
 - **稳定通信**: 增强的ESP8266驱动，支持TCP连接、普通/透传模式数据发送，并包含完整的状态反馈和错误处理。
 - **配置灵活**: WiFi热点、服务器IP和端口等关键参数可在代码中轻松配置。
 
@@ -159,7 +160,7 @@
 | 层次       | 技术/组件         | 描述                               |
 | :--------- | :---------------- | :--------------------------------- |
 | **嵌入式层** | `C`, `STM32 HAL`  | 使用PlatformIO进行开发的STM32固件     |
-| **通信层**   | `ESP8266`         | UART, TCP, WiFi, JSON              |
+| **通信层**   | `ESP8266`         | UART, TCP, WiFi, ECSS PUS          |
 | **后端层**   | `Python`, `FastAPI` | Uvicorn, asyncio, websockets       |
 | **数据库层** | `MySQL`, `SQLAlchemy` | 持久化存储传感器数据，支持历史查询  |
 | **ML层**     | `PyTorch`, `scikit-learn` | 深度学习分类、异常检测、智能决策 |
