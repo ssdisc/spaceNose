@@ -17,7 +17,7 @@
       </div>
     </header>
 
-    <el-row :gutter="14">
+    <el-row :gutter="10">
       <el-col :xs="24" :lg="12">
         <el-card class="glass panel" shadow="hover">
           <template #header>
@@ -104,7 +104,7 @@
             <el-tabs v-model="settingsTab" type="border-card" class="settings-tabs">
               <el-tab-pane label="配置" name="config">
                 <el-collapse accordion>
-                  <el-collapse-item title="后端字段映射" name="mapping">
+                  <el-collapse-item v-if="false" title="后端字段映射" name="mapping">
                 <el-form-item label="来源字段">
                   <el-select v-model="realtimeSourceField">
                     <el-option label="alcohol_ppm" value="alcohol_ppm" />
@@ -126,7 +126,7 @@
                 </div>
               </el-collapse-item>
 
-              <el-collapse-item title="自定义基线（仅模拟）" name="baseline">
+              <el-collapse-item v-if="false" title="自定义基线（仅模拟）" name="baseline">
                 <div class="grid-2">
                   <el-form-item v-for="gas in gases" :key="gas.key" :label="`${gas.label} 基线 (${gas.unit})`">
                     <el-input-number
@@ -182,7 +182,7 @@
                 </el-collapse>
               </el-tab-pane>
 
-              <el-tab-pane label="测试" name="test">
+              <el-tab-pane v-if="false" label="测试" name="test">
                 <el-collapse accordion>
                   <el-collapse-item title="测试用例管理" name="testcases">
                 <div class="hint">预定义测试场景，自动执行并验证ML模型的预测结果。</div>
@@ -247,7 +247,7 @@
                 </el-collapse>
               </el-tab-pane>
 
-              <el-tab-pane label="机器学习" name="ml">
+              <el-tab-pane v-if="false" label="机器学习" name="ml">
                 <el-collapse accordion>
                   <el-collapse-item title="场景识别（传统ML）" name="ml">
                 <div class="hint">
@@ -313,7 +313,7 @@
                 </div>
               </el-collapse-item>
 
-              <el-collapse-item title="机器学习（传感器阵列分类）" name="enose">
+              <el-collapse-item v-if="false" title="机器学习（传感器阵列分类）" name="enose">
                 <div class="hint">
                   使用电子鼻数据集（默认内置 ec-gcms-inference-dataset.csv）训练 delta 特征分类模型，演示“传感器阵列+模式识别”闭环。
                 </div>
@@ -418,7 +418,7 @@
               </el-collapse-item>
 
               <!-- 深度学习训练与轻量化监控 -->
-              <el-collapse-item title="深度学习模型（Year 1 轻量化）" name="dl">
+              <el-collapse-item v-if="false" title="深度学习模型（Year 1 轻量化）" name="dl">
                 <div class="dl-panel">
                   <div class="panel-hint">
                     训练轻量化深度学习模型（1D-CNN + GRU），满足星上部署要求：模型 &lt; 100KB，推理 &lt; 100ms
@@ -562,7 +562,7 @@
       </el-col>
 
       <el-col :xs="24" :lg="12">
-        <el-row :gutter="14">
+        <el-row :gutter="10">
           <el-col :xs="24" :sm="12" :md="8" v-for="gas in gasCards" :key="gas.key">
             <el-card shadow="hover" class="glass gas-card">
               <div class="gas-top">
@@ -581,7 +581,7 @@
           </el-col>
         </el-row>
 
-        <el-row :gutter="14" class="section">
+        <el-row :gutter="10" class="section">
           <el-col :xs="24">
             <el-card shadow="hover" class="glass chart-card">
               <template #header>
@@ -600,7 +600,7 @@
           </el-col>
         </el-row>
 
-        <el-row :gutter="14" class="section">
+        <el-row :gutter="10" class="section">
           <el-col :xs="24">
             <el-card shadow="hover" class="glass chart-card">
               <template #header>
@@ -1950,15 +1950,15 @@ export default {
 .lab {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
 }
 
 .lab-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 14px;
-  padding: 6px 8px 2px;
+  gap: 10px;
+  padding: 2px 6px 0;
 }
 
 .eyebrow {
@@ -1971,8 +1971,8 @@ export default {
 }
 
 .title h2 {
-  margin: 4px 0;
-  font-size: 22px;
+  margin: 2px 0;
+  font-size: 20px;
   font-weight: 800;
   background: linear-gradient(135deg, #e2e8f0 0%, #22d3ee 100%);
   -webkit-background-clip: text;
@@ -1984,8 +1984,9 @@ export default {
 .lead {
   margin: 0;
   color: #94a3b8;
-  line-height: 1.6;
+  line-height: 1.35;
   max-width: 680px;
+  font-size: 12px;
 }
 
 .head-actions {
@@ -2027,7 +2028,12 @@ export default {
 }
 
 .form :deep(.el-form-item) {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+}
+
+.form :deep(.el-form-item__label) {
+  line-height: 18px;
+  padding-bottom: 2px;
 }
 
 .form :deep(.el-form-item__label) {
@@ -2094,13 +2100,13 @@ export default {
 .btn-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 6px;
+  gap: 8px;
+  margin-top: 2px;
 }
 
 .export-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -2113,7 +2119,7 @@ export default {
 .settings-tabs :deep(.el-tabs__header) {
   background: rgba(30, 41, 59, 0.4);
   border-radius: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   border: 1px solid rgba(71, 85, 105, 0.3);
 }
 
@@ -2124,9 +2130,9 @@ export default {
 .settings-tabs :deep(.el-tabs__item) {
   color: #94a3b8;
   font-weight: 500;
-  padding: 0 16px;
-  height: 36px;
-  line-height: 36px;
+  padding: 0 12px;
+  height: 30px;
+  line-height: 30px;
 }
 
 .settings-tabs :deep(.el-tabs__item.is-active) {
@@ -2140,7 +2146,7 @@ export default {
 
 .settings-tabs :deep(.el-tabs__content) {
   padding: 0;
-  max-height: 400px;
+  max-height: 320px;
   overflow-y: auto;
 }
 
@@ -2153,8 +2159,8 @@ export default {
   background: rgba(30, 41, 59, 0.4);
   border: 1px solid rgba(71, 85, 105, 0.3);
   border-radius: 8px;
-  padding: 12px 16px;
-  margin-bottom: 8px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
   font-weight: 600;
   color: #e2e8f0;
   transition: all 0.3s ease;
@@ -2171,11 +2177,11 @@ export default {
 }
 
 :deep(.el-collapse-item__content) {
-  padding: 12px 16px;
+  padding: 8px 10px;
   background: rgba(15, 23, 42, 0.3);
   border: 1px solid rgba(71, 85, 105, 0.2);
   border-radius: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 /* ========== 动画效果 ========== */
@@ -2339,18 +2345,18 @@ export default {
 .grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px 12px;
+  gap: 8px 10px;
 }
 
 .hint {
-  margin-top: 8px;
+  margin-top: 6px;
   color: #94a3b8;
   background: rgba(30, 41, 59, 0.6);
   border: 1px dashed rgba(71, 85, 105, 0.5);
-  padding: 10px 12px;
-  border-radius: 10px;
-  line-height: 1.5;
-  font-size: 12px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  line-height: 1.35;
+  font-size: 11px;
 }
 
 .ml-actions {
@@ -2433,7 +2439,7 @@ export default {
 
 /* 气体卡片 - 太空风格 */
 .gas-card {
-  min-height: 130px;
+  min-height: 96px;
   position: relative;
   overflow: hidden;
 }
@@ -2444,7 +2450,7 @@ export default {
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 2px;
   background: linear-gradient(90deg, transparent, var(--gas-color, #22d3ee), transparent);
   opacity: 0.6;
 }
@@ -2453,28 +2459,28 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
 }
 
 .gas-label {
   font-weight: 800;
   color: #e2e8f0;
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .gas-unit {
-  font-size: 11px;
+  font-size: 10px;
   color: #64748b;
-  margin-top: 2px;
+  margin-top: 1px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
 }
 
 .gas-value {
-  margin-top: 12px;
-  font-size: 32px;
+  margin-top: 7px;
+  font-size: 24px;
   font-weight: 900;
-  letter-spacing: -0.5px;
+  letter-spacing: 0;
   background: linear-gradient(135deg, #e2e8f0 0%, #22d3ee 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -2484,23 +2490,23 @@ export default {
 }
 
 .gas-sub {
-  margin-top: 10px;
+  margin-top: 6px;
   display: flex;
-  gap: 12px;
+  gap: 6px;
   flex-wrap: wrap;
   color: #64748b;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .gas-sub span {
-  padding: 3px 8px;
+  padding: 2px 6px;
   background: rgba(30, 41, 59, 0.6);
   border-radius: 6px;
   border: 1px solid rgba(71, 85, 105, 0.3);
 }
 
 .section {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 /* 图表卡片 */
@@ -2514,7 +2520,7 @@ export default {
 }
 
 .chart {
-  height: 360px;
+  height: 260px;
 }
 
 .card-header-row {
@@ -2527,34 +2533,34 @@ export default {
 
 .small-meta {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
   color: #64748b;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 /* 指标区域 */
 .metric {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .metric-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
   color: #e2e8f0;
 }
 
 .metric-label {
   font-weight: 700;
   color: #e2e8f0;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .metric-value {
   color: #22d3ee;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -2568,15 +2574,15 @@ export default {
 
 /* 事件日志 */
 .mini-log {
-  margin-top: 12px;
+  margin-top: 8px;
   border-top: 1px solid rgba(71, 85, 105, 0.3);
-  padding-top: 12px;
+  padding-top: 8px;
 }
 
 .mini-log-list {
   display: grid;
-  gap: 8px;
-  max-height: 200px;
+  gap: 5px;
+  max-height: 130px;
   overflow-y: auto;
 }
 
@@ -2597,9 +2603,9 @@ export default {
 .mini-log-item {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 8px;
+  gap: 6px;
   align-items: start;
-  padding: 6px 8px;
+  padding: 4px 6px;
   background: rgba(30, 41, 59, 0.4);
   border-radius: 6px;
   border-left: 2px solid transparent;
@@ -2622,15 +2628,15 @@ export default {
 
 .mini-log-text {
   color: #94a3b8;
-  line-height: 1.4;
-  font-size: 12px;
+  line-height: 1.3;
+  font-size: 11px;
 }
 
 .empty {
   color: #64748b;
-  font-size: 12px;
+  font-size: 11px;
   text-align: center;
-  padding: 16px;
+  padding: 10px;
 }
 
 /* Element Plus 暗色主题覆盖 */
@@ -2641,11 +2647,11 @@ export default {
 :deep(.el-card__header) {
   background: transparent !important;
   border-bottom: 1px solid rgba(71, 85, 105, 0.3) !important;
-  padding: 14px 16px !important;
+  padding: 9px 12px !important;
 }
 
 :deep(.el-card__body) {
-  padding: 16px !important;
+  padding: 10px !important;
 }
 
 :deep(.el-tag) {
