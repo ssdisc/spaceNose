@@ -66,21 +66,6 @@
               <el-slider v-model="sampleHz" :min="0.2" :max="5" :step="0.2" show-input />
             </el-form-item>
 
-            <el-form-item v-if="mode === 'simulation'" label="温度 (°C)">
-              <el-slider v-model="temperatureC" :min="-20" :max="60" :step="1" show-input />
-            </el-form-item>
-
-            <el-form-item v-if="mode === 'simulation'" label="噪声强度 (%)">
-              <el-slider v-model="noisePercent" :min="0" :max="20" :step="1" show-input />
-            </el-form-item>
-
-            <el-form-item v-if="mode === 'simulation'" label="漂移强度 (‰/min)">
-              <el-slider v-model="driftPermillePerMin" :min="0" :max="10" :step="0.5" show-input />
-            </el-form-item>
-
-            <el-form-item v-if="mode === 'simulation'" label="交叉干扰（演示用）">
-              <el-switch v-model="enableInterference" active-text="开启" inactive-text="关闭" />
-            </el-form-item>
 
             <div class="btn-row">
               <template v-if="mode === 'simulation'">
@@ -104,42 +89,7 @@
             <el-tabs v-model="settingsTab" type="border-card" class="settings-tabs">
               <el-tab-pane label="配置" name="config">
                 <el-collapse accordion>
-                  <el-collapse-item title="后端字段映射" name="mapping">
-                <el-form-item label="来源字段">
-                  <el-select v-model="realtimeSourceField">
-                    <el-option label="alcohol_ppm" value="alcohol_ppm" />
-                    <el-option label="co2_ppm" value="co2_ppm" />
-                    <el-option label="voltage" value="voltage" />
-                    <el-option label="adc" value="adc" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="映射到气体">
-                  <el-select v-model="realtimeMapGas">
-                    <el-option v-for="gas in gases" :key="gas.key" :label="gas.label" :value="gas.key" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="缩放倍率">
-                  <el-input-number v-model="realtimeScale" :min="0" :step="0.1" :precision="2" />
-                </el-form-item>
-                <div class="hint">
-                  当前硬件若只有单通道（如 MQ-3），可将其映射到任意气体曲线用于演示；其余气体保持为空。
-                </div>
-              </el-collapse-item>
 
-              <el-collapse-item title="自定义基线（仅模拟）" name="baseline">
-                <div class="grid-2">
-                  <el-form-item v-for="gas in gases" :key="gas.key" :label="`${gas.label} 基线 (${gas.unit})`">
-                    <el-input-number
-                      v-model="baseline[gas.key]"
-                      :min="0"
-                      :step="gas.unit === 'ppb' ? 1 : 0.1"
-                      :precision="gas.unit === 'ppb' ? 0 : 2"
-                      :disabled="scenario !== 'custom'"
-                    />
-                  </el-form-item>
-                </div>
-                <div class="hint">选择“自定义”场景后可编辑基线。</div>
-              </el-collapse-item>
 
               <el-collapse-item title="阈值告警" name="thresholds">
                 <div class="grid-2">
@@ -182,240 +132,10 @@
                 </el-collapse>
               </el-tab-pane>
 
-              <el-tab-pane label="测试" name="test">
-                <el-collapse accordion>
-                  <el-collapse-item title="测试用例管理" name="testcases">
-                <div class="hint">预定义测试场景，自动执行并验证ML模型的预测结果。</div>
-
-                <div class="test-actions">
-                  <el-button
-                    size="small"
-                    type="primary"
-                    :loading="testRunning"
-                    :disabled="mode !== 'simulation'"
-                    @click="runAllTests"
-                  >运行全部测试</el-button>
-                  <el-button size="small" @click="resetTestResults">清除结果</el-button>
-                </div>
-
-                <el-progress
-                  v-if="testRunning"
-                  :percentage="testProgress"
-                  :format="() => `${Math.round(testProgress)}%`"
-                  style="margin: 10px 0;"
-                />
-
-                <div class="test-list">
-                  <div
-                    v-for="tc in testCases"
-                    :key="tc.id"
-                    class="test-item"
-                    :class="{ 'test-running': currentTestId === tc.id }"
-                  >
-                    <div class="test-item-header">
-                      <span class="test-name">{{ tc.name }}</span>
-                      <div class="test-item-actions">
-                        <el-tag size="small" effect="plain">{{ SCENARIO_INFO[tc.scenario]?.name || tc.scenario }}</el-tag>
-                        <el-tag
-                          v-if="testResults[tc.id]"
-                          size="small"
-                          :type="testResults[tc.id].passed ? 'success' : 'danger'"
-                        >
-                          {{ testResults[tc.id].passed ? '通过' : '失败' }}
-                        </el-tag>
-                        <el-button
-                          size="small"
-                          text
-                          :loading="currentTestId === tc.id"
-                          :disabled="testRunning && currentTestId !== tc.id"
-                          @click="runSingleTest(tc)"
-                        >运行</el-button>
-                      </div>
-                    </div>
-                    <div class="test-item-detail">
-                      <span v-if="tc.anomaly">异常: {{ getGasLabel(tc.anomaly.gasKey) }} ×{{ tc.anomaly.multiplier }}</span>
-                      <span v-else>无异常注入</span>
-                      <span>期望: {{ tc.expected.label }} (≥{{ tc.expected.minConfidence * 100 }}%)</span>
-                    </div>
-                    <div v-if="testResults[tc.id] && !testResults[tc.id].passed" class="test-error">
-                      实际: {{ testResults[tc.id].actual?.label || '无' }}
-                      ({{ ((testResults[tc.id].actual?.confidence || 0) * 100).toFixed(1) }}%)
-                    </div>
-                  </div>
-                </div>
-              </el-collapse-item>
-                </el-collapse>
-              </el-tab-pane>
 
               <el-tab-pane label="机器学习" name="ml">
                 <el-collapse accordion>
-                  <el-collapse-item title="场景识别（传统ML）" name="ml">
-                <div class="hint">
-                  使用前端模拟数据（ch4/ph3/so2/h2s/co2/vocs）上传训练集并训练模型；硬件多气体接入后可直接复用。
-                </div>
-                <div class="ml-actions">
-                  <el-button size="small" :loading="mlLoading" @click="refreshMlStatus">刷新状态</el-button>
-                  <el-button
-                    size="small"
-                    type="primary"
-                    :disabled="mode !== 'simulation'"
-                    :loading="mlUploading"
-                    @click="uploadScenarioSample"
-                  >上传样本</el-button>
-                  <el-button size="small" type="warning" :loading="mlTraining" @click="trainScenarioModel">
-                    训练模型
-                  </el-button>
-                  <el-button size="small" type="success" :loading="mlPredicting" @click="predictScenario">
-                    预测当前
-                  </el-button>
-                </div>
 
-                <div v-if="mlError" class="ml-error">{{ mlError }}</div>
-
-                <div v-if="mlStatus" class="ml-grid">
-                  <div class="ml-kv">
-                    <span>ML 可用</span>
-                    <el-tag :type="mlStatus.ml_available ? 'success' : 'danger'" effect="plain" size="small">
-                      {{ mlStatus.ml_available ? 'Yes' : 'No' }}
-                    </el-tag>
-                  </div>
-                  <div class="ml-kv">
-                    <span>数据集条数</span>
-                    <span class="ml-value">{{ mlStatus.scenario.dataset_count }}</span>
-                  </div>
-                  <div class="ml-kv">
-                    <span>模型状态</span>
-                    <el-tag
-                      :type="mlStatus.scenario.model.enabled ? 'success' : 'info'"
-                      effect="plain"
-                      size="small"
-                    >{{ mlStatus.scenario.model.enabled ? '已训练' : '未训练' }}</el-tag>
-                  </div>
-                  <div class="ml-kv">
-                    <span>训练时间</span>
-                    <span class="ml-value">{{ mlStatus.scenario.model.trained_at || '—' }}</span>
-                  </div>
-                </div>
-
-                <div v-if="mlPrediction && mlPrediction.ok" class="ml-result">
-                  <el-tag type="success" effect="dark" size="small">预测</el-tag>
-                  <span class="ml-result-text">
-                    {{ mlPrediction.label }}（置信度 {{ (mlPrediction.confidence * 100).toFixed(1) }}%）
-                  </span>
-                </div>
-                <div v-else-if="mlPrediction && !mlPrediction.ok" class="ml-result">
-                  <el-tag type="info" effect="plain" size="small">预测失败</el-tag>
-                  <span class="ml-result-text">{{ mlPrediction.error }}</span>
-                </div>
-
-                <div class="hint" v-if="mode !== 'simulation'">
-                  当前处于“对接后端”模式，多气体特征不足；请先切回“模拟实验”上传训练样本。
-                </div>
-              </el-collapse-item>
-
-              <el-collapse-item title="机器学习（传感器阵列分类）" name="enose">
-                <div class="hint">
-                  使用电子鼻数据集（默认内置 ec-gcms-inference-dataset.csv）训练 delta 特征分类模型，演示“传感器阵列+模式识别”闭环。
-                </div>
-                <div class="ml-actions">
-                  <el-button size="small" :loading="enoseLoading" @click="refreshMlStatus">刷新状态</el-button>
-                  <el-button size="small" type="warning" :loading="enoseTraining" @click="trainEnoseModel">
-                    训练阵列模型
-                  </el-button>
-                  <el-button size="small" type="primary" :loading="enoseSampling" @click="sampleEnoseDataset">
-                    随机抽样
-                  </el-button>
-                  <el-button size="small" type="success" :loading="enosePredicting" @click="predictEnose">
-                    预测该样本
-                  </el-button>
-                </div>
-
-                <div v-if="enoseError" class="ml-error">{{ enoseError }}</div>
-
-                <div v-if="enoseStatus" class="ml-grid">
-                  <div class="ml-kv">
-                    <span>默认数据集</span>
-                    <el-tag
-                      :type="enoseStatus.dataset_exists_default ? 'success' : 'danger'"
-                      effect="plain"
-                      size="small"
-                    >{{ enoseStatus.dataset_exists_default ? '已就绪' : '缺失' }}</el-tag>
-                  </div>
-                  <div class="ml-kv">
-                    <span>模型状态</span>
-                    <el-tag
-                      :type="enoseStatus.model.enabled ? 'success' : 'info'"
-                      effect="plain"
-                      size="small"
-                    >{{ enoseStatus.model.enabled ? '已训练' : '未训练' }}</el-tag>
-                  </div>
-                  <div class="ml-kv">
-                    <span>类别</span>
-                    <span class="ml-value">{{ (enoseStatus.model.classes || []).join(', ') || '—' }}</span>
-                  </div>
-                  <div class="ml-kv">
-                    <span>训练时间</span>
-                    <span class="ml-value">{{ enoseStatus.model.trained_at || '—' }}</span>
-                  </div>
-                </div>
-
-                <div v-if="enoseTrainResult && enoseTrainResult.trained" class="ml-grid mt-10">
-                  <div class="ml-kv">
-                    <span>测试准确率</span>
-                    <span class="ml-value">{{ formatNumber(enoseTrainResult.test_accuracy * 100, 1) }}%</span>
-                  </div>
-                  <div class="ml-kv">
-                    <span>Macro-F1</span>
-                    <span class="ml-value">{{ formatNumber(enoseTrainResult.test_macro_f1, 3) }}</span>
-                  </div>
-                  <div class="ml-kv">
-                    <span>类别数</span>
-                    <span class="ml-value">{{ enoseTrainResult.classes.length }}</span>
-                  </div>
-                  <div class="ml-kv">
-                    <span>样本数</span>
-                    <span class="ml-value">{{ enoseTrainResult.sample_count }}</span>
-                  </div>
-                </div>
-
-                <div v-if="enoseTrainResult && enoseTrainResult.confusion_matrix?.length" class="ml-section">
-                  <div class="section-title">混淆矩阵（测试集）</div>
-                  <el-table :data="confusionRows" size="small" border>
-                    <el-table-column prop="label" label="True \\ Pred" width="140" />
-                    <el-table-column
-                      v-for="cls in enoseTrainResult.confusion_matrix_labels"
-                      :key="cls"
-                      :prop="cls"
-                      :label="cls"
-                      align="center"
-                    />
-                  </el-table>
-                </div>
-
-                <div v-if="enoseSample" class="ml-section">
-                  <div class="section-title">样本特征（delta = stimulus - baseline）</div>
-                  <el-descriptions :column="2" border size="small">
-                    <el-descriptions-item v-for="(v, k) in enoseSample.features" :key="k" :label="k">
-                      {{ v == null ? '—' : formatNumber(v, 6) }}
-                    </el-descriptions-item>
-                  </el-descriptions>
-                  <div class="hint mt-8">
-                    标签（基于 delta 最大通道）: <strong>{{ enoseSample.label }}</strong>
-                  </div>
-                </div>
-
-                <div v-if="enosePrediction" class="ml-result mt-8">
-                  <el-tag :type="enosePrediction.ok ? 'success' : 'info'" effect="dark" size="small">
-                    预测
-                  </el-tag>
-                  <span class="ml-result-text" v-if="enosePrediction.ok">
-                    {{ enosePrediction.label }}（{{ formatNumber(enosePrediction.confidence * 100, 1) }}%）
-                  </span>
-                  <span class="ml-result-text" v-else>
-                    {{ enosePrediction.error || '预测失败' }}
-                  </span>
-                </div>
-              </el-collapse-item>
 
               <!-- 深度学习训练与轻量化监控 -->
               <el-collapse-item title="深度学习模型（Year 1 轻量化）" name="dl">
@@ -678,31 +398,32 @@ const GAS_META = [
  */
 const SCENARIO_PRESETS = {
   // 火星大气 - 好奇号/TGO数据
-  // 关键: CH4 是唯一潜在生物标志，浓度极低
-  mars: { ch4: 0.0005, ph3: 0, so2: 0.001, h2s: 0.001, co2: 9500, vocs: 0.01 },
+  // 关键: CH4 是唯一潜在生物标志，浓度极低；CO2 占 95%
+  // 浓度值与训练数据集对齐（dataset_generator.py PLANETARY_SCENARIOS）
+  mars: { ch4: 0.5, ph3: 0, so2: 0.01, h2s: 0.01, co2: 9500, vocs: 10 },
 
   // 金星云层 - 金星快车/先驱者数据
-  // 关键: SO2 高, PH3 争议性探测 (Greaves et al. 2020)
-  venus: { ch4: 0.001, ph3: 0.00002, so2: 150, h2s: 0.5, co2: 9600, vocs: 0.01 },
+  // 关键: SO2 高, PH3 争议性探测, H2S 高
+  venus: { ch4: 0.1, ph3: 0.5, so2: 150, h2s: 500, co2: 9600, vocs: 5 },
 
   // 彗星67P彗发 - Rosetta ROSINA数据
   // 关键: H2S 和 VOCs 丰富, 原始太阳系物质
-  comet: { ch4: 500, ph3: 0.0001, so2: 10, h2s: 1500, co2: 1000, vocs: 2000 },
+  comet: { ch4: 500, ph3: 0.1, so2: 10, h2s: 1500, co2: 1000, vocs: 2000 },
 
-  // 木卫二 - 假设冰下海洋热液喷口
+  // 木卫二 - 假设冰下海洋热液喷口（注意：此场景不在模型训练类别中，分类将映射到最相似的已知类别）
   // 关键: H2S 是热液活动标志 (理论推测)
   europa: { ch4: 0.1, ph3: 0, so2: 0.01, h2s: 10, co2: 50, vocs: 0.5 },
 
-  // 土卫六 - 卡西尼-惠更斯数据
+  // 土卫六 - 卡西尼-惠更斯数据（注意：此场景不在模型训练类别中，分类将映射到最相似的已知类别）
   // 关键: CH4 循环 (液态甲烷湖), 复杂有机物
   titan: { ch4: 50000, ph3: 0, so2: 0.001, h2s: 0.01, co2: 10, vocs: 500 },
 
   // 地球生命基线 - NOAA 2023
-  // 关键: CH4 生物源, CO2 当前水平
-  earth_life: { ch4: 1.9, ph3: 0.00001, so2: 0.005, h2s: 0.05, co2: 420, vocs: 0.5 },
+  // 关键: CH4 生物源, H2S 变化大, VOC 生物源丰富
+  earth_life: { ch4: 1900, ph3: 0.01, so2: 5, h2s: 50, co2: 420, vocs: 500 },
 
   // 深空背景/仪器本底
-  background: { ch4: 0.00001, ph3: 0, so2: 0.00001, h2s: 0.00001, co2: 0.1, vocs: 0.001 },
+  background: { ch4: 0.05, ph3: 0, so2: 0.01, h2s: 0.01, co2: 0.1, vocs: 5 },
 
   custom: null
 }

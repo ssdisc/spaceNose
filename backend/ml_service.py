@@ -1401,6 +1401,43 @@ class MlService:
             "device": str(device),
         }
 
+    # 前端气体名 -> (传感器名, 灵敏度范围) 的映射
+    # 训练数据集的特征顺序: MQ4_CH4, MQ136_H2S, MQ135_SO2, MQ135_CO2, MQ2_VOC, PH3_MOX
+    _CONC_TO_SENSOR_MAP = [
+        # (前端字段, 传感器名, 灵敏度范围 min, 灵敏度范围 max)
+        ("ch4",  "MQ4_CH4",   200,   10000),
+        ("h2s",  "MQ136_H2S", 1,     100),
+        ("so2",  "MQ135_SO2", 10,    1000),
+        ("co2",  "MQ135_CO2", 400,   10000),
+        ("vocs", "MQ2_VOC",   100,   10000),
+        ("ph3",  "PH3_MOX",   0.01,  10),
+    ]
+
+    def _concentration_to_sensor_response(self, features: Dict[str, Any]) -> List[float]:
+        """
+        将前端气体浓度 (ppm) 转换为模型训练时使用的传感器响应值 (0-1)
+
+        使用与 dataset_generator.py 中完全一致的对数响应模型:
+            response = (log10(conc) - log10(min)) / (log10(max) - log10(min))
+            response = clip(response, 0, 1)
+
+        同时修正特征顺序，输出按训练数据集的特征顺序排列:
+            [MQ4_CH4, MQ136_H2S, MQ135_SO2, MQ135_CO2, MQ2_VOC, PH3_MOX]
+        """
+        import math
+        vector = []
+        for frontend_key, sensor_name, min_sens, max_sens in self._CONC_TO_SENSOR_MAP:
+            conc = _safe_float(features.get(frontend_key)) or 0.0
+            if conc <= 0:
+                vector.append(0.0)
+            else:
+                log_conc = math.log10(max(conc, 1e-10))
+                log_min = math.log10(max(min_sens, 1e-10))
+                log_max = math.log10(max(max_sens, 1e-10))
+                response = (log_conc - log_min) / (log_max - log_min)
+                vector.append(max(0.0, min(1.0, response)))
+        return vector
+
     def predict_with_decision(self, features: Dict[str, Any]) -> Dict[str, Any]:
         """
         使用深度学习模型进行预测，并返回智能决策结果
@@ -1412,9 +1449,9 @@ class MlService:
 
         start_time = time.perf_counter()
 
-        # 准备输入
+        # 准备输入：将前端气体浓度转换为训练时使用的传感器响应值
         config = self._dl_config or ModelConfig()
-        vector = [_safe_float(features.get(k)) or 0.0 for k in SCENARIO_FEATURES]
+        vector = self._concentration_to_sensor_response(features)
 
         # 更新时序缓冲区
         self._ts_buffer.append(vector)
@@ -1427,6 +1464,7 @@ class MlService:
             seq_data.insert(0, vector)
 
         x_tensor = torch.tensor([seq_data], dtype=torch.float32)
+
 
         # 分类预测
         class_idx = 4  # background
@@ -1441,7 +1479,7 @@ class MlService:
                 probs = torch.softmax(logits, dim=-1)[0]
                 class_idx = int(torch.argmax(probs))
                 confidence = float(probs[class_idx])
-                class_names = IntelligentDecisionEngine.CLASS_NAMES
+                class_names = self._dl_classifier_info.classes if self._dl_classifier_info and self._dl_classifier_info.classes else IntelligentDecisionEngine.CLASS_NAMES
                 probabilities = {class_names[i]: float(probs[i]) for i in range(len(class_names))}
                 class_name = class_names[class_idx]
 

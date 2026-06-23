@@ -45,8 +45,8 @@ class ModelConfig:
     n_features: int = 6
     # 时序窗口长度
     seq_length: int = 16
-    # 气体类别数 (mars, venus, comet, earth_life, background)
-    n_classes: int = 5
+    # 气体类别数 (mars, venus, comet, europa, titan, earth_life, background)
+    n_classes: int = 7
 
     # 1D-CNN 配置
     cnn_channels: List[int] = None  # [16, 32]
@@ -409,13 +409,15 @@ class IntelligentDecisionEngine:
     """
 
     # 气体类别名称
-    CLASS_NAMES = ['mars', 'venus', 'comet', 'earth_life', 'background']
+    CLASS_NAMES = ['mars', 'venus', 'comet', 'europa', 'titan', 'earth_life', 'background']
 
     # 各类别的科学价值权重
     SCIENTIFIC_VALUE_WEIGHTS = {
         'mars': 0.95,       # 火星相关 - 高价值
         'venus': 0.90,      # 金星相关 - 高价值
         'comet': 0.85,      # 彗星相关 - 中高价值
+        'europa': 0.92,     # 木卫二热液 - 高价值（生命探索）
+        'titan': 0.88,      # 土卫六甲烷 - 中高价值
         'earth_life': 0.80, # 地球生命相关 - 参考价值
         'background': 0.10  # 背景气体 - 低价值
     }

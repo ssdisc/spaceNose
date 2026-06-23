@@ -133,6 +133,32 @@ PLANETARY_SCENARIOS = {
         },
         probability_weight=0.7
     ),
+    "europa": PlanetaryScenario(
+        label="europa",
+        description="木卫二冰下海洋 - 热液活动探测",
+        gas_concentrations={
+            "CH4": (0.1, 0.05),      # 极低
+            "CO2": (50, 20),         # ppm 低
+            "H2S": (10, 5),          # ppm 热液标志
+            "SO2": (0.01, 0.005),    # 极低
+            "PH3": (0.0, 0.001),     # 不存在
+            "VOC": (0.5, 0.2),       # 极低
+        },
+        probability_weight=0.7
+    ),
+    "titan": PlanetaryScenario(
+        label="titan",
+        description="土卫六大气 - 甲烷循环探测",
+        gas_concentrations={
+            "CH4": (50000, 10000),   # ppm 5% 液态甲烷湖
+            "CO2": (10, 5),          # ppm 极低
+            "H2S": (0.01, 0.005),    # 极低
+            "SO2": (0.001, 0.0005),  # 极低
+            "PH3": (0.0, 0.001),     # 不存在
+            "VOC": (500, 200),       # ppm 复杂有机物
+        },
+        probability_weight=0.7
+    ),
     "earth_life": PlanetaryScenario(
         label="earth_life",
         description="地球生命信号参考",
