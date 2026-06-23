@@ -563,7 +563,8 @@ export default {
     // 异常检测时序图配置
     anomalyChartOption() {
       const labels = this.anomalyPoints.map((p) => p.label)
-      const scores = this.anomalyPoints.map((p) => p.score)
+      // ECharts 标准空值 '-' 替代 null：避免 visualMap/areaStyle 渲染异常
+      const scores = this.anomalyPoints.map((p) => (p.score == null ? '-' : p.score))
       const isAnomalies = this.anomalyPoints.map((p) => p.isAnomaly)
 
       return {
@@ -578,7 +579,7 @@ export default {
             const score = scores[idx]
             const isAnomaly = isAnomalies[idx]
             return `${params[0].axisValue}<br/>
-              分数: ${score?.toFixed(4) || '—'}<br/>
+              分数: ${typeof score === 'number' ? score.toFixed(4) : '—'}<br/>
               状态: ${isAnomaly ? '<span style="color:#ef4444">异常</span>' : '<span style="color:#22c55e">正常</span>'}`
           }
         },
@@ -596,20 +597,13 @@ export default {
           axisLabel: { color: '#64748b', fontSize: 10 },
           splitLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.2)' } }
         },
-        visualMap: {
-          show: false,
-          pieces: [
-            { lte: 0, color: '#ef4444' },
-            { gt: 0, color: '#22c55e' }
-          ]
-        },
         series: [
           {
             name: '异常分数',
             type: 'line',
             smooth: true,
             showSymbol: false,
-            lineStyle: { width: 2 },
+            lineStyle: { color: '#22d3ee', width: 2 },
             areaStyle: {
               color: {
                 type: 'linear',
