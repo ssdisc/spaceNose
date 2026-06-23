@@ -104,7 +104,7 @@
             <el-tabs v-model="settingsTab" type="border-card" class="settings-tabs">
               <el-tab-pane label="配置" name="config">
                 <el-collapse accordion>
-                  <el-collapse-item v-if="false" title="后端字段映射" name="mapping">
+                  <el-collapse-item title="后端字段映射" name="mapping">
                 <el-form-item label="来源字段">
                   <el-select v-model="realtimeSourceField">
                     <el-option label="alcohol_ppm" value="alcohol_ppm" />
@@ -126,7 +126,7 @@
                 </div>
               </el-collapse-item>
 
-              <el-collapse-item v-if="false" title="自定义基线（仅模拟）" name="baseline">
+              <el-collapse-item title="自定义基线（仅模拟）" name="baseline">
                 <div class="grid-2">
                   <el-form-item v-for="gas in gases" :key="gas.key" :label="`${gas.label} 基线 (${gas.unit})`">
                     <el-input-number
@@ -182,7 +182,7 @@
                 </el-collapse>
               </el-tab-pane>
 
-              <el-tab-pane v-if="false" label="测试" name="test">
+              <el-tab-pane label="测试" name="test">
                 <el-collapse accordion>
                   <el-collapse-item title="测试用例管理" name="testcases">
                 <div class="hint">预定义测试场景，自动执行并验证ML模型的预测结果。</div>
@@ -247,7 +247,7 @@
                 </el-collapse>
               </el-tab-pane>
 
-              <el-tab-pane v-if="false" label="机器学习" name="ml">
+              <el-tab-pane label="机器学习" name="ml">
                 <el-collapse accordion>
                   <el-collapse-item title="场景识别（传统ML）" name="ml">
                 <div class="hint">
@@ -313,7 +313,7 @@
                 </div>
               </el-collapse-item>
 
-              <el-collapse-item v-if="false" title="机器学习（传感器阵列分类）" name="enose">
+              <el-collapse-item title="机器学习（传感器阵列分类）" name="enose">
                 <div class="hint">
                   使用电子鼻数据集（默认内置 ec-gcms-inference-dataset.csv）训练 delta 特征分类模型，演示“传感器阵列+模式识别”闭环。
                 </div>
@@ -418,7 +418,7 @@
               </el-collapse-item>
 
               <!-- 深度学习训练与轻量化监控 -->
-              <el-collapse-item v-if="false" title="深度学习模型（Year 1 轻量化）" name="dl">
+              <el-collapse-item title="深度学习模型（Year 1 轻量化）" name="dl">
                 <div class="dl-panel">
                   <div class="panel-hint">
                     训练轻量化深度学习模型（1D-CNN + GRU），满足星上部署要求：模型 &lt; 100KB，推理 &lt; 100ms
