@@ -1,4 +1,5 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
@@ -34,6 +35,17 @@ from pus import (
  )
 
 app = FastAPI()
+
+# 允许跨域请求：前端开发服务器(:8080)与后端API(:8000)端口不同，
+# 属于不同源，浏览器会拦截 fetch 请求。开放 CORS 以便前端读取数据库历史数据。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(ml_router)
 
 # 静态文件目录，指向Vue项目的dist目录
