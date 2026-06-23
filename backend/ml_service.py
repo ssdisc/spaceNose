@@ -1139,12 +1139,13 @@ class MlService:
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         criterion = torch.nn.CrossEntropyLoss()
 
-        # 训练
-        model.train()
+        # 训练（逐 epoch 记录真实的训练/验证准确率，用于训练曲线）
         train_losses = []
-        best_val_acc = 0.0
+        train_accuracies = []
+        val_accuracies = []
 
         for epoch in range(epochs):
+            model.train()
             perm = torch.randperm(len(x_train_tensor), device=device)
             epoch_loss = 0.0
             n_batches = 0
@@ -1165,16 +1166,17 @@ class MlService:
 
             train_losses.append(epoch_loss / max(1, n_batches))
 
-        # 验证
-        model.eval()
-        with torch.no_grad():
-            val_logits = model(x_val_tensor)
-            val_preds = torch.argmax(val_logits, dim=-1)
-            val_acc = (val_preds == y_val_tensor).float().mean().item()
+            # 本 epoch 结束后，在完整训练集/验证集上评估真实准确率
+            model.eval()
+            with torch.no_grad():
+                train_preds = torch.argmax(model(x_train_tensor), dim=-1)
+                val_preds = torch.argmax(model(x_val_tensor), dim=-1)
+                train_accuracies.append((train_preds == y_train_tensor).float().mean().item())
+                val_accuracies.append((val_preds == y_val_tensor).float().mean().item())
 
-            train_logits = model(x_train_tensor)
-            train_preds = torch.argmax(train_logits, dim=-1)
-            train_acc = (train_preds == y_train_tensor).float().mean().item()
+        # 最终准确率即最后一个 epoch 的真实值
+        train_acc = train_accuracies[-1] if train_accuracies else 0.0
+        val_acc = val_accuracies[-1] if val_accuracies else 0.0
 
         # 反转标签映射
         idx_to_label = {v: k for k, v in label_map.items()}
@@ -1216,17 +1218,7 @@ class MlService:
                 classes=class_names,
             )
 
-        # 计算每个 epoch 的验证准确率（用于训练曲线）
-        val_accuracies = []
-        train_accuracies = []
-
-        # 重新训练以记录历史（简化版：使用最终结果估算）
-        # 实际训练中已完成，这里生成模拟的训练曲线用于可视化
-        for i in range(len(train_losses)):
-            progress = (i + 1) / len(train_losses)
-            # 模拟准确率逐渐提升的曲线
-            train_accuracies.append(min(train_acc, train_acc * (0.5 + 0.5 * progress) + random.uniform(-0.05, 0.05)))
-            val_accuracies.append(min(val_acc, val_acc * (0.4 + 0.6 * progress) + random.uniform(-0.08, 0.08)))
+        # 训练历史（train_accuracies / val_accuracies）已在训练循环中逐 epoch 真实记录
 
         return {
             "trained": True,
