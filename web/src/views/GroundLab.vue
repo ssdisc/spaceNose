@@ -137,11 +137,11 @@
                 <el-collapse accordion>
 
 
-              <!-- 深度学习训练与轻量化监控 -->
+              <!-- 深度学习轻量化监控 -->
               <el-collapse-item title="深度学习模型（Year 1 轻量化）" name="dl">
                 <div class="dl-panel">
                   <div class="panel-hint">
-                    训练轻量化深度学习模型（1D-CNN + GRU），满足星上部署要求：模型 &lt; 100KB，推理 &lt; 100ms
+                    查看已训练轻量化深度学习模型（1D-CNN + GRU）的部署指标：模型 &lt; 100KB，推理 &lt; 100ms
                   </div>
 
                   <!-- 模型轻量化指标仪表盘 -->
@@ -163,7 +163,7 @@
                       </div>
                     </div>
                     <div class="metric-gauge metric-accuracy">
-                      <div class="gauge-value">{{ dlMetrics.accuracy ? (dlMetrics.accuracy * 100).toFixed(1) + '%' : '—' }}</div>
+                      <div class="gauge-value">{{ dlMetrics.accuracy != null ? (dlMetrics.accuracy * 100).toFixed(1) + '%' : '—' }}</div>
                       <div class="gauge-label">验证准确率</div>
                       <div class="gauge-target">F1 &gt; 0.92</div>
                       <div class="gauge-bar accuracy-bar">
@@ -176,9 +176,6 @@
                   <div class="dl-actions">
                     <el-button size="small" @click="fetchDLMetrics" :loading="dlMetricsLoading">
                       刷新指标
-                    </el-button>
-                    <el-button size="small" type="warning" @click="trainDLSynthetic" :loading="dlTraining">
-                      训练（合成数据）
                     </el-button>
                     <el-button size="small" type="primary" @click="predictWithDecision" :loading="dlPredicting" :disabled="mode !== 'simulation'">
                       智能决策预测
@@ -372,7 +369,6 @@ import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
-import { autoTable } from 'jspdf-autotable'
 
 use([LineChart, RadarChart, GridComponent, LegendComponent, TooltipComponent, TitleComponent, MarkLineComponent, VisualMapComponent, RadarComponent, CanvasRenderer])
 
@@ -674,7 +670,7 @@ export default {
     lineOption() {
       const labels = this.points.map((p) => p.tLabel)
       const series = GAS_META.map((gas) => ({
-        name: `${gas.label} (${gas.unit})`,
+        name: gas.label,
         type: 'line',
         yAxisIndex: gas.axis,
         smooth: true,
@@ -691,14 +687,31 @@ export default {
           trigger: 'axis',
           backgroundColor: 'rgba(15, 23, 42, 0.9)',
           borderColor: 'rgba(34, 211, 238, 0.3)',
-          textStyle: { color: '#e2e8f0', fontSize: 12 }
+          textStyle: { color: '#e2e8f0', fontSize: 12 },
+          formatter: (params) => {
+            const rows = params.map((item) => {
+              const gas = GAS_META.find((g) => g.label === item.seriesName)
+              const unit = gas?.unit || ''
+              return `${item.marker}${item.seriesName}: ${item.value ?? '—'} ${unit}`
+            })
+            return [params[0]?.axisValue || '', ...rows].join('<br/>')
+          }
         },
         legend: {
-          top: 0,
-          textStyle: { color: '#94a3b8', fontSize: 12 },
-          inactiveColor: '#475569'
+          top: 4,
+          left: 12,
+          right: 12,
+          type: 'scroll',
+          itemWidth: 10,
+          itemHeight: 6,
+          itemGap: 10,
+          textStyle: { color: '#94a3b8', fontSize: 10 },
+          inactiveColor: '#475569',
+          pageIconColor: '#94a3b8',
+          pageIconInactiveColor: '#334155',
+          pageTextStyle: { color: '#64748b' }
         },
-        grid: { left: 40, right: 46, top: 40, bottom: 30, borderColor: 'rgba(148, 163, 184, 0.1)' },
+        grid: { left: 56, right: 60, top: 72, bottom: 30, borderColor: 'rgba(148, 163, 184, 0.1)' },
         xAxis: {
           type: 'category',
           data: labels,
@@ -709,14 +722,20 @@ export default {
           {
             type: 'value',
             name: 'ppm',
-            nameTextStyle: { color: '#94a3b8' },
+            nameLocation: 'middle',
+            nameGap: 42,
+            nameRotate: 90,
+            nameTextStyle: { color: '#94a3b8', fontSize: 11, align: 'center' },
             axisLabel: { color: '#94a3b8' },
             splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.1)' } }
           },
           {
             type: 'value',
             name: 'ppb',
-            nameTextStyle: { color: '#94a3b8' },
+            nameLocation: 'middle',
+            nameGap: 44,
+            nameRotate: -90,
+            nameTextStyle: { color: '#94a3b8', fontSize: 11, align: 'center' },
             axisLabel: { color: '#94a3b8' },
             splitLine: { show: false }
           }
@@ -1381,17 +1400,116 @@ export default {
       this.addEvent('success', `已导出 Excel：${filename}`)
     },
     exportPdf() {
-      const doc = new jsPDF()
-      doc.setFontSize(14)
-      doc.text('Ground Verification Report (Year 1)', 14, 18)
-      doc.setFontSize(10)
-      doc.text(`Generated: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}`, 14, 26)
-      doc.text(`Mode: ${this.modeTagText}`, 14, 32)
-      if (this.mode === 'simulation') {
-        doc.text(`Scenario: ${this.scenario}`, 14, 38)
-        doc.text(`Sample: ${this.sampleHz} Hz, Temp: ${this.temperatureC} C`, 14, 44)
-      } else {
-        doc.text(`Mapping: ${this.realtimeSourceField} -> ${this.realtimeMapGas} x${this.realtimeScale}`, 14, 38)
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' })
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const scale = 2
+      const margin = 40
+      const contentWidth = pageWidth - margin * 2
+      const fontFamily = '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif'
+      const pages = []
+      let canvas = null
+      let ctx = null
+      let y = margin
+
+      const setFont = (size = 10, weight = '400', color = '#111827') => {
+        ctx.font = `${weight} ${size}pt ${fontFamily}`
+        ctx.fillStyle = color
+        ctx.textBaseline = 'top'
+      }
+
+      const newPage = () => {
+        canvas = document.createElement('canvas')
+        canvas.width = pageWidth * scale
+        canvas.height = pageHeight * scale
+        ctx = canvas.getContext('2d')
+        ctx.scale(scale, scale)
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, pageWidth, pageHeight)
+        ctx.strokeStyle = '#e5e7eb'
+        ctx.lineWidth = 1
+        pages.push(canvas)
+        y = margin
+      }
+
+      const ensureSpace = (height) => {
+        if (y + height > pageHeight - margin) {
+          newPage()
+        }
+      }
+
+      const wrapText = (text, maxWidth, fontSize = 10, weight = '400') => {
+        setFont(fontSize, weight)
+        const source = String(text ?? '')
+        const lines = []
+        let line = ''
+        for (const char of source) {
+          const next = line + char
+          if (ctx.measureText(next).width > maxWidth && line) {
+            lines.push(line)
+            line = char
+          } else {
+            line = next
+          }
+        }
+        if (line) lines.push(line)
+        return lines.length ? lines : ['']
+      }
+
+      const drawText = (text, x = margin, fontSize = 10, weight = '400', color = '#111827', lineHeight = 16, maxWidth = contentWidth) => {
+        const lines = wrapText(text, maxWidth, fontSize, weight)
+        ensureSpace(lines.length * lineHeight)
+        setFont(fontSize, weight, color)
+        lines.forEach((line) => {
+          ctx.fillText(line, x, y)
+          y += lineHeight
+        })
+      }
+
+      const drawSectionTitle = (text) => {
+        ensureSpace(30)
+        y += 8
+        setFont(12, '700', '#0f172a')
+        ctx.fillText(text, margin, y)
+        y += 22
+      }
+
+      const drawKeyValue = (label, value) => {
+        ensureSpace(18)
+        setFont(9, '700', '#475569')
+        ctx.fillText(label, margin, y)
+        setFont(9, '400', '#111827')
+        ctx.fillText(String(value ?? '-'), margin + 120, y)
+        y += 18
+      }
+
+      const drawTable = (headers, rows, widths) => {
+        const rowPadding = 6
+        const lineHeight = 14
+        const drawRow = (cells, isHeader = false) => {
+          const cellLines = cells.map((cell, idx) => wrapText(cell, widths[idx] - rowPadding * 2, 9, isHeader ? '700' : '400'))
+          const rowHeight = Math.max(26, Math.max(...cellLines.map((lines) => lines.length)) * lineHeight + rowPadding * 2)
+          ensureSpace(rowHeight)
+
+          let x = margin
+          ctx.fillStyle = isHeader ? '#eef2ff' : '#ffffff'
+          ctx.fillRect(margin, y, widths.reduce((sum, w) => sum + w, 0), rowHeight)
+          ctx.strokeStyle = '#cbd5e1'
+          ctx.strokeRect(margin, y, widths.reduce((sum, w) => sum + w, 0), rowHeight)
+
+          cells.forEach((_, idx) => {
+            ctx.strokeRect(x, y, widths[idx], rowHeight)
+            setFont(9, isHeader ? '700' : '400', isHeader ? '#1e3a8a' : '#111827')
+            cellLines[idx].forEach((line, lineIdx) => {
+              ctx.fillText(line, x + rowPadding, y + rowPadding + lineIdx * lineHeight)
+            })
+            x += widths[idx]
+          })
+          y += rowHeight
+        }
+
+        drawRow(headers, true)
+        rows.forEach((row) => drawRow(row))
       }
 
       const statsBody = GAS_META.map((gas) => {
@@ -1405,29 +1523,59 @@ export default {
         return [
           gas.label,
           gas.unit,
-          min === null ? '—' : this.formatNumber(min, gas.unit),
-          max === null ? '—' : this.formatNumber(max, gas.unit),
-          avg === null ? '—' : this.formatNumber(avg, gas.unit),
+          min === null ? '无数据' : this.formatNumber(min, gas.unit),
+          max === null ? '无数据' : this.formatNumber(max, gas.unit),
+          avg === null ? '无数据' : this.formatNumber(avg, gas.unit),
           `${this.thresholds[gas.key].warning} / ${this.thresholds[gas.key].danger}`
         ]
       })
 
-      autoTable(doc, {
-        startY: 52,
-        head: [['Gas', 'Unit', 'Min', 'Max', 'Avg', 'Warn/Danger']],
-        body: statsBody,
-        styles: { fontSize: 9 }
-      })
+      const eventSample = this.events.slice(-18).reverse().map((e) => [
+        e.time,
+        e.type,
+        e.text
+      ])
 
-      const eventSample = this.events.slice(-12).reverse().map((e) => [`${e.time}`, e.type, e.text])
-      autoTable(doc, {
-        startY: doc.lastAutoTable ? doc.lastAutoTable.finalY + 8 : 110,
-        head: [['Time', 'Type', 'Event']],
-        body: eventSample.length ? eventSample : [['—', 'info', 'No events']],
-        styles: { fontSize: 9 }
-      })
+      newPage()
+      setFont(16, '700', '#0f172a')
+      ctx.fillText('星际嗅探者地面验证报告（第一年）', margin, y)
+      y += 28
+      drawText(`生成时间：${dayjs().format('YYYY-MM-DD HH:mm:ss')}`, margin, 9, '400', '#475569')
+      drawText('说明：本 PDF 采用浏览器 Canvas 渲染中文内容，避免 jsPDF 默认字体导致的中文乱码。', margin, 9, '400', '#64748b')
+
+      drawSectionTitle('一、实验配置')
+      drawKeyValue('数据来源', this.mode === 'simulation' ? '模拟实验' : '对接后端实时数据')
+      if (this.mode === 'simulation') {
+        drawKeyValue('场景预设', this.scenario)
+        drawKeyValue('采样频率', `${this.sampleHz} Hz`)
+        drawKeyValue('环境温度', `${this.temperatureC} C`)
+      } else {
+        drawKeyValue('字段映射', `${this.realtimeSourceField} -> ${this.realtimeMapGas} x${this.realtimeScale}`)
+      }
+      drawKeyValue('数据点数', this.points.length)
+      drawKeyValue('采样模式', this.samplingMode === 'high' ? '高采样模式' : '常规模式')
+      drawKeyValue('科学价值评分', `${this.scienceScore} / 100`)
+      drawKeyValue('下传比例', `${this.downlinkPercent}%`)
+
+      drawSectionTitle('二、气体统计')
+      drawTable(
+        ['气体', '单位', '最小值', '最大值', '平均值', '预警/危险阈值'],
+        statsBody,
+        [120, 50, 80, 80, 80, 130]
+      )
+
+      drawSectionTitle('三、事件记录')
+      drawTable(
+        ['时间', '类型', '事件内容'],
+        eventSample.length ? eventSample : [['-', 'info', '暂无事件']],
+        [105, 55, contentWidth - 160]
+      )
 
       const filename = `ground-lab-report_${dayjs().format('YYYYMMDD_HHmmss')}.pdf`
+      pages.forEach((page, index) => {
+        if (index > 0) doc.addPage()
+        doc.addImage(page.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, pageWidth, pageHeight)
+      })
       doc.save(filename)
       this.addEvent('success', `已生成 PDF：${filename}`)
     },
@@ -1547,19 +1695,29 @@ export default {
     async fetchDLMetrics() {
       this.dlMetricsLoading = true
       try {
-        const response = await fetch(`${this.apiBaseUrl()}/api/ml/dl/metrics`)
+        const url = `${this.apiBaseUrl()}/api/ml/dl/metrics`
+        const response = await fetch(url)
+        if (!response.ok) {
+          const detail = await response.text()
+          throw new Error(`HTTP ${response.status}: ${detail || response.statusText}`)
+        }
         const json = await response.json()
         if (json.success && json.data) {
           const data = json.data
           this.dlMetrics = {
             model_size_kb: data.classifier?.size_kb || null,
             inference_time_ms: data.classifier?.inference_time_ms || null,
-            accuracy: this.dlTrainResult?.val_accuracy || null,
+            accuracy: data.classifier?.val_accuracy ?? this.dlTrainResult?.val_accuracy ?? null,
             available: data.available || false
           }
+        } else {
+          throw new Error(json.data?.error || json.error || '接口未返回可用指标')
         }
       } catch (err) {
-        this.addEvent('warning', `获取 DL 指标失败: ${err}`)
+        const message = err instanceof TypeError
+          ? `无法连接后端，请确认 backend/main.py 已启动并监听 ${this.apiBaseUrl()}`
+          : String(err.message || err)
+        this.addEvent('warning', `获取 DL 指标失败: ${message}`)
       } finally {
         this.dlMetricsLoading = false
       }

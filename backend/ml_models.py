@@ -524,7 +524,7 @@ def count_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
 
 
-def measure_inference_time(model: nn.Module,
+def measure_inference_time(model: Any,
                            input_tensor: torch.Tensor,
                            warmup: int = 3,
                            repeat: int = 10) -> float:
@@ -537,7 +537,8 @@ def measure_inference_time(model: nn.Module,
     if not _TORCH_AVAILABLE:
         return 0.0
 
-    model.eval()
+    if hasattr(model, "eval"):
+        model.eval()
 
     # 预热
     with torch.no_grad():

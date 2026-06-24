@@ -1585,32 +1585,51 @@ class MlService:
 
         config = self._dl_config or ModelConfig()
         test_input = torch.randn(1, config.seq_length, config.n_features)
+        classifier_checkpoint_metrics: Dict[str, Any] = {}
+        if self._dl_classifier_path.exists():
+            try:
+                checkpoint = torch.load(self._dl_classifier_path, map_location="cpu")
+                classifier_checkpoint_metrics = checkpoint.get("metrics") or {}
+            except Exception:
+                classifier_checkpoint_metrics = {}
 
         if self._dl_classifier is not None:
-            size_kb = get_model_size_kb(self._dl_classifier)
-            params = count_parameters(self._dl_classifier)
-            inf_time = measure_inference_time(self._dl_classifier, test_input)
-            metrics["classifier"] = {
-                "size_kb": size_kb,
-                "parameters": params,
-                "inference_time_ms": inf_time,
-                "size_compliant": size_kb < 100,
-                "time_compliant": inf_time < 100,
-            }
+            if hasattr(self._dl_classifier, "state_dict") and hasattr(self._dl_classifier, "parameters"):
+                size_kb = get_model_size_kb(self._dl_classifier)
+                params = count_parameters(self._dl_classifier)
+                inf_time = measure_inference_time(self._dl_classifier, test_input)
+                metrics["classifier"] = {
+                    "size_kb": size_kb,
+                    "parameters": params,
+                    "inference_time_ms": inf_time,
+                    "train_accuracy": classifier_checkpoint_metrics.get("train_accuracy"),
+                    "val_accuracy": classifier_checkpoint_metrics.get("val_accuracy"),
+                    "size_compliant": size_kb < 100,
+                    "time_compliant": inf_time < 100,
+                }
+            else:
+                metrics["classifier"] = {
+                    "error": f"invalid model object: {type(self._dl_classifier).__name__}"
+                }
 
         if self._dl_autoencoder is not None:
-            size_kb = get_model_size_kb(self._dl_autoencoder)
-            params = count_parameters(self._dl_autoencoder)
-            inf_time = measure_inference_time(
-                lambda x: self._dl_autoencoder.compute_anomaly_score(x), test_input
-            )
-            metrics["autoencoder"] = {
-                "size_kb": size_kb,
-                "parameters": params,
-                "inference_time_ms": inf_time,
-                "size_compliant": size_kb < 100,
-                "time_compliant": inf_time < 100,
-            }
+            if hasattr(self._dl_autoencoder, "state_dict") and hasattr(self._dl_autoencoder, "parameters"):
+                size_kb = get_model_size_kb(self._dl_autoencoder)
+                params = count_parameters(self._dl_autoencoder)
+                inf_time = measure_inference_time(self._dl_autoencoder, test_input)
+                metrics["autoencoder"] = {
+                    "size_kb": size_kb,
+                    "parameters": params,
+                    "inference_time_ms": inf_time,
+                    "size_compliant": size_kb < 100,
+                    "time_compliant": inf_time < 100,
+                }
+            else:
+                inf_time = measure_inference_time(self._dl_autoencoder, test_input)
+                metrics["autoencoder"] = {
+                    "inference_time_ms": inf_time,
+                    "error": f"invalid model object: {type(self._dl_autoencoder).__name__}"
+                }
 
         return metrics
 

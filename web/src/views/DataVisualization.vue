@@ -12,9 +12,6 @@
         <el-tag :type="connectionTagType" effect="dark">{{ connectionTagText }}</el-tag>
         <el-tag :type="sensorTagType" effect="plain">传感器：{{ sensorStatusText }}</el-tag>
         <el-tag :type="mlAnomalyTagType" effect="plain">ML异常：{{ mlAnomalyTagText }}</el-tag>
-        <el-button type="warning" plain :loading="mlAnomalyTraining" @click="trainAnomalyModel">
-          训练异常模型
-        </el-button>
         <el-button type="primary" :disabled="isConnected || wsConnecting" @click="connectWebSocket">
           {{ wsConnecting ? '连接中…' : '连接' }}
         </el-button>
